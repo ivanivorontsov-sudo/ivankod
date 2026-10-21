@@ -1,6 +1,6 @@
 {
   "name": "ivancode",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "ИванКод — студия разработки с ИИ",
   "main": "app/main.js",
   "author": "Воронцов Иван Игоревич",
@@ -51,7 +51,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "IvanCode-Setup-${version}.exe"
+      "artifactName": "IvanCode-Setup-${version}.exe",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico"
     },
     "portable": {
       "artifactName": "IvanCode-Portable-${version}.exe"
