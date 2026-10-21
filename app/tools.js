@@ -19,11 +19,13 @@ function regPath(){ if(!W) return []; const out=[]; for(const k of ['HKCU\\Envir
 // PATH, изменённый установщиками после запуска студии (или в другом сеансе), подхватываем без перезапуска
 function refreshPath(){ if(!W) return; const pk=Object.keys(process.env).find(k=>k.toUpperCase()==='PATH')||'Path'; process.env[pk]=TF.mergePath(process.env[pk],regPath(),true);
  for(const v of ['JAVA_HOME','ANDROID_HOME','ANDROID_SDK_ROOT','GRADLE_HOME']) if(!process.env[v]){ try{ const r=cp.spawnSync('reg',['query','HKCU\\Environment','/v',v],{encoding:'utf8',windowsHide:true,timeout:5000}); const m=String(r.stdout||'').match(/REG_(?:EXPAND_)?SZ\s+(.*)/); if(m) process.env[v]=TF.expand(m[1].trim(),process.env) }catch{} } }
-function realDeps(){ return {W,env:process.env,exists:p=>{ try{ return fs.existsSync(p) }catch{ return false } },readdir:d=>fs.readdirSync(d),own:rel=>path.join(TROOT(),...rel.split('\\')),
- run:(exe,args)=>{ try{ const bat=/\.(bat|cmd)$/i.test(exe); const r=bat?cp.spawnSync('"'+exe+'" '+args.join(' '),{shell:true,encoding:'utf8',timeout:20000,windowsHide:true}):cp.spawnSync(exe,args,{encoding:'utf8',timeout:20000,windowsHide:true}); return {code:r.status==null?-1:r.status,out:(r.stdout||'')+(r.stderr||'')+(r.error?String(r.error.message):'')} }catch(e){ return {code:-1,out:String(e.message)} } },
+// gradle/sdkmanager — java-программы: проверяем их с проверенной JDK 17+, а не со старой JAVA_HOME (иначе «Gradle старый», хотя виновата Java)
+function runEnv(id){ if(id==='jdk') return undefined; const jh=process.env.JAVA_HOME; if(!jh||(javaMajor(jh)||0)>=17) return undefined; const j=goodJdk(); return j?{...process.env,JAVA_HOME:j.home}:undefined }
+function realDeps(id){ const env=runEnv(id); return {W,env:process.env,exists:p=>{ try{ return fs.existsSync(p) }catch{ return false } },readdir:d=>fs.readdirSync(d),own:rel=>path.join(TROOT(),...rel.split('\\')),
+ run:(exe,args)=>{ try{ const bat=/\.(bat|cmd)$/i.test(exe); const r=bat?cp.spawnSync('"'+exe+'" '+args.join(' '),{shell:true,encoding:'utf8',timeout:20000,windowsHide:true,env}):cp.spawnSync(exe,args,{encoding:'utf8',timeout:20000,windowsHide:true,env}); return {code:r.status==null?-1:r.status,out:(r.stdout||'')+(r.stderr||'')+(r.error?String(r.error.message):'')} }catch(e){ return {code:-1,out:String(e.message)} } },
  where:n=>{ try{ const r=W?cp.spawnSync('where',[n],{encoding:'utf8',windowsHide:true,timeout:8000}):cp.spawnSync('which',['-a',n],{encoding:'utf8',timeout:8000}); return r.status===0?String(r.stdout).split(/\r?\n/).map(x=>x.trim()).filter(Boolean):[] }catch{ return [] } }} }
-let _found={}; function found(id){ if(!_found[id]) _found[id]=TF.find(id,realDeps()); return _found[id] }
-function rescan(){ _found={}; _py=null; refreshPath() }
+let _found={}; function found(id){ if(!_found[id]) _found[id]=TF.find(id,realDeps(id)); return _found[id] }
+function rescan(){ _found={}; _py=null; for(const k in _jm) delete _jm[k]; refreshPath() }
 const installed=id=>found(id).found;
 function report(){ rescan(); const L=[webview2()]; for(const id in TOOLS){ const f=found(id); L.push({id,name:TOOLS[id].name,found:f.found,path:f.path||'',version:f.version||'',source:f.source||'',tried:f.tried||[],lastError:lastErr[id]||''}) }
  if(W){ try{ const vw=path.join(process.env['ProgramFiles(x86)']||'C:\\Program Files (x86)','Microsoft Visual Studio','Installer','vswhere.exe'); if(fs.existsSync(vw)){ const r=cp.spawnSync(vw,['-latest','-property','installationPath'],{encoding:'utf8',windowsHide:true,timeout:10000}); L.push({id:'vs',name:'Visual Studio',found:!!String(r.stdout).trim(),path:String(r.stdout).trim(),version:'',source:'vswhere',tried:[]}) } else L.push({id:'vs',name:'Visual Studio',found:false,tried:[{path:vw,why:'vswhere не найден'}]}) }catch{} }
@@ -42,10 +44,16 @@ function ponDep(){ const NB=require('./nativebuild.js'); const b=NB.ponBin(); le
 const WHY_KT={jdk:'Java 17 — на ней работает сборщик Android (подойдёт и встроенная в Android Studio)',android:'Android SDK — части Android для сборки APK (подойдёт SDK из Android Studio)',gradle:'Gradle 8.9+ — собирает APK (подойдёт Gradle, скачанный Android Studio)'};
 function deps(way,kind){ rescan(); if(way==='pon') return [ponDep()]; if(way==='cs') return [{...found('dotnet'),id:'dotnet',name:'.NET SDK 8',why:'собирает настоящую программу Windows (подойдёт .NET из Visual Studio); ставится в папку студии, без прав администратора',lastError:lastErr.dotnet||''}]; if(way==='kotlin') return ['jdk','android','gradle'].map(id=>({...found(id),id,name:TOOLS[id].name,why:WHY_KT[id],lastError:lastErr[id]||''})); const need=way==='fast'?(kind==='phone'?[]:['webview2']):(kind==='phone'?['jdk','android','gradle']:['python','nsis']);
  return need.map(id=>id==='webview2'?{...webview2(),why:'чтобы готовая программа открывалась в своём окне (без него — откроется в браузере)',optional:true}:{...found(id),id,name:TOOLS[id].name,why:'нужен для сборки способом «для опытных»',lastError:lastErr[id]||''}) }
+// 1.3.1: какая Java лежит в папке (JAVA_HOME). null — нет java или не запускается
+const _jm={}; function javaMajor(home){ if(!home) return null; if(home in _jm) return _jm[home]; let v=null; try{ const j=path.join(home,'bin',W?'java.exe':'java'); if(fs.existsSync(j)){ const r=cp.spawnSync(j,['-version'],{encoding:'utf8',timeout:15000,windowsHide:true}); const m=String((r.stderr||'')+(r.stdout||'')).match(/version "?(\d+)(?:\.(\d+))?/); if(m) v=+m[1]===1?+(m[2]||0):+m[1] } }catch{} return _jm[home]=v }
+// JDK 17+, проверенная запуском java -version: сначала своя/найденная студией, иначе null
+function goodJdk(){ const f=found('jdk'); if(f.found&&f.home&&(javaMajor(f.home)||0)>=17) return {home:f.home,version:f.version,source:f.source}; return null }
+// окружение для sdkmanager/gradle: JAVA_HOME всегда указывает на проверенную JDK 17+ (старая/битая системная JAVA_HOME ломает sdkmanager)
+function javaEnv(){ const env=buildEnv(); const j=goodJdk(); if(!j) throw new Error('нужна Java 17 или новее, а подходящей не нашлось — сначала установите JDK 17 (кнопка «Установить» рядом с Java)'); env.JAVA_HOME=j.home; const pk=Object.keys(env).find(k=>k.toUpperCase()==='PATH')||'PATH'; env[pk]=path.join(j.home,'bin')+path.delimiter+(env[pk]||''); return env }
 function buildEnv(base=process.env){ const env={...base}; const add=[];
  for(const id in TOOLS){ const f=found(id); if(!f.found) continue; const t=TOOLS[id];
   if(f.path.startsWith(TROOT())){ for(const b of t.bin) add.push(path.join(tdir(id),b)); for(const k in (t.env||{})) env[k]=tdir(id) }
-  else { add.push(f.dir); if(id==='python') add.push(path.join(f.dir,'Scripts')); if(id==='jdk'&&f.home&&!(env.JAVA_HOME&&fs.existsSync(env.JAVA_HOME))) env.JAVA_HOME=f.home; if(id==='android'&&f.home&&!env.ANDROID_HOME) env.ANDROID_HOME=f.home } }
+  else { add.push(f.dir); if(id==='python') add.push(path.join(f.dir,'Scripts')); if(id==='jdk'&&f.home&&!((javaMajor(env.JAVA_HOME)||0)>=17)) env.JAVA_HOME=f.home; if(id==='android'&&f.home&&!env.ANDROID_HOME) env.ANDROID_HOME=f.home } }
  { const ok=d=>d&&fs.existsSync(d); if(!ok(env.ANDROID_HOME)&&ok(env.ANDROID_SDK_ROOT)) env.ANDROID_HOME=env.ANDROID_SDK_ROOT; if(env.ANDROID_HOME) env.ANDROID_SDK_ROOT=env.ANDROID_HOME; else if(env.ANDROID_SDK_ROOT&&!ok(env.ANDROID_SDK_ROOT)) delete env.ANDROID_SDK_ROOT } // разные пути к SDK ломают gradle
  if(env.ANDROID_HOME) add.push(path.join(env.ANDROID_HOME,'build-tools','35.0.0'));
  const pk=Object.keys(env).find(k=>k.toUpperCase()==='PATH')||'PATH'; env[pk]=add.concat([env[pk]||'']).join(path.delimiter);
@@ -75,13 +83,13 @@ async function install0(id,log){ const t=TOOLS[id]; for(const n of t.needs||[]) 
   const r=await run('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',ps,'-Channel','8.0','-InstallDir',dest],{},log); if(r.code) throw new Error('dotnet-install код '+r.code) }
  else { const zip=path.join(tmp,id+'.zip'); let last=0; await download(t.url,zip,(g,tot)=>{ const p=tot?Math.floor(g*100/tot):Math.floor(g/1048576); if(p!==last){ last=p; log(`\r${tot?p+'%':p+' МБ'} (${(g/1048576).toFixed(1)} МБ)`,true) } }); log('\nРаспаковка…\n');
   if(id==='android'){ const cl=path.join(dest,'cmdline-tools'); fs.rmSync(cl,{recursive:true,force:true}); await extract(zip,cl); fs.renameSync(path.join(cl,'cmdline-tools'),path.join(cl,'latest'));
-   const sdkm=path.join(cl,'latest','bin','sdkmanager.bat'); const env=buildEnv(); const yes='y\n'.repeat(60);
+   const sdkm=path.join(cl,'latest','bin','sdkmanager.bat'); rescan(); const env=javaEnv(); log('Java для sdkmanager: '+env.JAVA_HOME+'\n'); const yes='y\n'.repeat(60);
    log('Принимаю лицензии Android SDK…\n'); await run('cmd.exe',['/c',sdkm,'--sdk_root='+dest,'--licenses'],{env,input:yes},log);
    log('Скачиваю platform-tools, build-tools;35.0.0, platforms;android-35…\n'); const r=await run('cmd.exe',['/c',sdkm,'--sdk_root='+dest,'platform-tools','build-tools;35.0.0','platforms;android-35'],{env,input:yes},log); if(r.code) throw new Error('sdkmanager код '+r.code) }
   else { fs.rmSync(dest,{recursive:true,force:true}); await extract(zip,dest); if(!t.flat) hoist(dest,t.sub) }
   try{ fs.unlinkSync(zip) }catch{} }
  rescan(); if(!fs.existsSync(path.join(tdir(id),t.check))) throw new Error('файлы скачаны, но '+t.check+' не появился в '+dest+' — установка не удалась');
- const v=TF.find(id,{...realDeps(),where:()=>[],env:{}}); if(!v.found) throw new Error('установлен, но не запускается: '+((v.tried.find(x=>x.path.startsWith(TROOT()))||{}).why||'нет ответа на проверку версии'));
+ const v=TF.find(id,{...realDeps(id),where:()=>[],env:{}}); if(!v.found) throw new Error('установлен, но не запускается: '+((v.tried.find(x=>x.path.startsWith(TROOT()))||{}).why||'нет ответа на проверку версии'));
  delete lastErr[id]; log(`✔ ${t.name} установлен и проверен: ${v.version}\n`); return true }
 // ---- типы проектов и сборка ----
 function detect(root){ const has=f=>fs.existsSync(path.join(root,f)); const ls=fs.readdirSync(root);
@@ -231,9 +239,20 @@ function tpl(kind,root,name,opt){ opt=opt||{}; const W_=(f,t)=>{ const p=path.jo
   W_('tests/test_app.py',`from app import create_app\n\n\ndef test_index(tmp_path):\n    app = create_app({"DATABASE": str(tmp_path / "t.db"), "TESTING": True})\n    r = app.test_client().get("/")\n    assert r.status_code == 200\n`);
   W_('.gitignore','__pycache__/\nivancode-out/\n*.spec\n.pytest_cache/\n'); return 'python' }
  if(kind==='python'){ W_('main.py',`def main():\n    name = input("Как вас зовут? ")\n    print(f"Привет, {name}! Это ${name}.")\n\n\nif __name__ == "__main__":\n    main()\n`); W_('requirements.txt',''); W_('.gitignore','__pycache__/\nbuild/\ndist/\nivancode-out/\n*.spec\n'); return 'python' }
+ if(kind==='ponyatny'){ W_('программа.pon',`# ${name} — программа на языке «Понятный»
+# F5 — запустить. Справка по языку: кнопка 📖 «Справка».
+подключи "стд/консоль"
+
+рамка("${String(name).replace(/["\\{}]/g,'')}")
+пусть имя = спроси("Как вас зовут?")
+если имя == ничего или имя == "" то
+    имя = "друг"
+конец
+напиши "Привет, {имя}!"
+`); W_('.gitignore','ivancode-out/\n'); return 'ponyatny' }
  throw new Error('неизвестный шаблон') }
 // подготовка к сборке: то, что ломает сборку на машинах новичков
 function prepBuild(root,kind){ if(kind==='android'){ const gp=path.join(root,'gradle.properties'); let t=fs.existsSync(gp)?fs.readFileSync(gp,'utf8'):'';
   const add=[]; if(!/android\.overridePathCheck/.test(t)) add.push('android.overridePathCheck=true'); if(!/android\.useAndroidX/.test(t)) add.push('android.useAndroidX=true'); if(!/org\.gradle\.jvmargs/.test(t)) add.push('org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8');
   if(add.length) fs.writeFileSync(gp,t.replace(/\s*$/,'\n')+add.join('\n')+'\n') } }
-module.exports={deps,webview2,installWebview2,report,rescan,refreshPath,found,pyCmd,fixPy,prepBuild,translit:(n)=>String(n).toLowerCase().split('').map(c=>({а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'e',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'h',ц:'ts',ч:'ch',ш:'sh',щ:'sch',ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya'})[c]??c).join('').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'app',iconSave,applyIcon,iconIco,zipDir,postFor,pyEntry,TOOLS,installed,install,buildEnv,detect,targets,cmdFor,parseErrors,tpl,run,TROOT,download};
+module.exports={javaMajor,goodJdk,javaEnv,deps,webview2,installWebview2,report,rescan,refreshPath,found,pyCmd,fixPy,prepBuild,translit:(n)=>String(n).toLowerCase().split('').map(c=>({а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'e',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'h',ц:'ts',ч:'ch',ш:'sh',щ:'sch',ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya'})[c]??c).join('').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'app',iconSave,applyIcon,iconIco,zipDir,postFor,pyEntry,TOOLS,installed,install,buildEnv,detect,targets,cmdFor,parseErrors,tpl,run,TROOT,download};

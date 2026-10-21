@@ -28,7 +28,7 @@ function find(id,d){ const s=SPEC[id]; const e=d.env, tried=[]; const cands=[];
  if(d.W){ for(const p of (s.dirs(e)||[]).filter(Boolean)) for(const g of globOne(p,d)) add(g,'стандартная папка');
   if(id==='python'){ const r=d.run('py',['-3','-c','import sys;print(sys.executable)']); const p=(r.code===0&&String(r.out).trim().split(/\r?\n/).pop())||''; if(p&&/python/i.test(p)) add(p.trim(),'py -3 (Python Launcher)') }
   if(!s.noPath) for(const p of d.where(s.exe)) add(p,'PATH') }
- else { if(!s.noPath) for(const p of d.where(s.lx)) add(p,'PATH'); if(id==='android'){ for(const h of [e.ANDROID_HOME,e.ANDROID_SDK_ROOT].filter(Boolean)) add(h+'/platform-tools/adb','ANDROID_HOME') } }
+ else { if(!s.noPath) for(const p of d.where(s.lx)) add(p,'PATH'); if(id==='jdk'&&e.JAVA_HOME) add(e.JAVA_HOME+'/bin/java','JAVA_HOME'); if(id==='android'){ for(const h of [e.ANDROID_HOME,e.ANDROID_SDK_ROOT].filter(Boolean)) add(h+'/platform-tools/adb','ANDROID_HOME') } }
  for(const c of cands){ if(d.W&&STUB.test(c.p)){ tried.push({path:c.p,why:'заглушка Microsoft Store (не настоящий Python) — пропускаю'}); continue }
   if(!d.exists(c.p)){ tried.push({path:c.p,why:'файла нет'}); continue }
   const r=d.run(c.p,s.ver); const out=String(r.out||'').trim(); const m=out.match(s.ok);

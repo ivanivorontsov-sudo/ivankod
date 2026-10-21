@@ -5,6 +5,11 @@ const NB=require('./nativebuild.js');
 function init(T){
  const send=(ch,...a)=>{ for(const w of BrowserWindow.getAllWindows()) try{ w.webContents.send(ch,...a) }catch{} };
  const ktEnv=()=>{ const env=T.buildEnv(); const g=T.found('gradle'); if(g&&g.found) env.IVANCODE_GRADLE=g.path; return env };
+ // 1.3.1: проверка компьютера и исправления (после каждого — повторная проверка)
+ const D=require('./diag.js');
+ ipcMain.handle('pon:bin',()=>NB.ponBin()||'');
+ ipcMain.handle('diag:run',async(e,o)=>{ try{ return await D.runAll(T,o||{}) }catch(err){ return {items:[],err:String(err.message||err)} } });
+ ipcMain.handle('diag:fix',async(e,id,o)=>{ const log=t=>send('diag:log',String(t)); let ok=true, err=''; try{ await D.fix(T,id,log,o||{}) }catch(x){ ok=false; err=String(x.message||x); log('✖ '+err+'\n') } const after=await D.runAll(T,o||{}); return {ok,err,...after} });
  let warm=null; // один прогрев на запуск студии
  ipcMain.handle('kt:prewarm',async()=>{ if(warm) return warm; const env=ktEnv(); if(!env.IVANCODE_GRADLE||!env.ANDROID_HOME) return {ok:false,skip:true};
   warm=NB.ktPrewarm(path.join(app.getPath('userData'),'kt-warm'),{env,sdk:env.ANDROID_HOME}).then(r=>{ if(!r.ok) warm=null; return {ok:r.ok,ms:r.ms,env:r.env} }); return warm });
