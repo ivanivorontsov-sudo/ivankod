@@ -14,7 +14,7 @@ function create(){
   win.setMenuBarVisibility(false); win.loadFile(path.join(__dirname,'index.html'));
   win.webContents.setWindowOpenHandler(({url})=>{ shell.openExternal(url); return {action:'deny'} });
 }
-app.whenReady().then(()=>{ try{ T.refreshPath() }catch{} create() }); require('./fastmain').init(T); app.on('window-all-closed',()=>{ for(const k in procs) try{procs[k].kill()}catch{}; app.quit() });
+app.whenReady().then(()=>{ try{ T.refreshPath() }catch{} create() }); require('./fastmain').init(T); require('./nativemain').init(T); app.on('window-all-closed',()=>{ for(const k in procs) try{procs[k].kill()}catch{}; app.quit() });
 const IGN=new Set(['.ivancode','ivancode-out','.gradle','node_modules','.git','bin','obj','__pycache__','.venv','venv','dist','build','.vs']);
 ipcMain.handle('cfg:get',()=>loadCfg()); ipcMain.handle('cfg:set',(e,c)=>saveCfg(c));
 ipcMain.handle('dlg:folder',async()=>{ const r=await dialog.showOpenDialog(win,{properties:['openDirectory']}); return r.canceled?null:r.filePaths[0] });
@@ -78,18 +78,20 @@ ipcMain.handle('ai:chat',async(e,reqId,prov,messages)=>{
     const body=JSON.stringify({model:prov.model,messages,stream:true,temperature:0.2,...(prov.maxTokens?{max_tokens:prov.maxTokens}:{}),...(/pollinations/.test(prov.base||'')?{reasoning_effort:'low',seed:Math.floor(Math.random()*1e9)}:{}),...(prov.extra||{})});
     // сторож: нет новых токенов (ни текста, ни «размышлений») дольше idle/first секунд → обрыв с понятной ошибкой
     const idleS=prov.idleTimeout||75, firstS=prov.firstTimeout||Math.max(idleS,90);
-    await new Promise((resolve,reject)=>{ const u=new URL(url); const mod=u.protocol==='http:'?require('http'):https; let got=false, wd=null;
+    // бесплатный Pollinations: «1 ответ в 30 с» (HTTP 402 FREE_LIMIT) — жду сколько сказано и повторяю один раз, а не сыплю ошибкой
+    if(/pollinations/.test(prov.base||'')){ const gap=31000-(Date.now()-(global.__polLast||0)); if(gap>0){ act('wait',Math.ceil(gap/1000)); await new Promise(r=>setTimeout(r,gap)) } }
+    for(let att=0;;att++){ try{ await new Promise((resolve,reject)=>{ const u=new URL(url); const mod=u.protocol==='http:'?require('http'):https; let got=false, wd=null;
       const arm=()=>{ clearTimeout(wd); const s=got?idleS:firstS; wd=setTimeout(()=>rq.destroy(new Error(`TIMEOUT: ИИ молчит ${s} с`)),s*1000) };
       const rq=mod.request(u,{method:'POST',headers,agent},r=>{ let buf='';
         if(r.statusCode>=400){ let d='';r.on('data',c=>d+=c);r.on('end',()=>reject(new Error('HTTP '+r.statusCode+': '+d.slice(0,500))));return }
-        const raw=[]; r.on('data',c=>{ if(process.env.IVANCODE_DEBUGAI) raw.push(c.toString('utf8')); buf+=c.toString('utf8'); let i; while((i=buf.indexOf('\n'))>=0){ const l=buf.slice(0,i).trim(); buf=buf.slice(i+1);
+        const raw=[]; const dec=new (require('string_decoder').StringDecoder)('utf8'); r.on('data',c=>{ const s=dec.write(c); if(process.env.IVANCODE_DEBUGAI) raw.push(s); buf+=s; /* русская буква, разрезанная между кусками сети, больше не превращается в «�» */ let i; while((i=buf.indexOf('\n'))>=0){ const l=buf.slice(0,i).trim(); buf=buf.slice(i+1);
           if(!l.startsWith('data:')) continue; const d=l.slice(5).trim(); if(d==='[DONE]') continue;
           try{ const j=JSON.parse(d); const ch=j.choices&&j.choices[0]; const dl=ch&&ch.delta||{}; const t=dl.content; const th=dl.reasoning_content||dl.reasoning;
             if(t){ got=true; arm(); send(t) } else if(th){ got=true; arm(); act('think',String(th).length) }
             if(ch&&ch.finish_reason==='length') send('\n\n[ответ оборван лимитом длины]') }catch{} } });
         r.on('end',()=>{ if(process.env.IVANCODE_DEBUGAI) fs.writeFileSync('/tmp/aidebug-'+Date.now()+'.json',JSON.stringify({req:JSON.parse(body),raw:raw.join('').slice(-20000)})); resolve() }) });
-      aiReq[reqId]=rq; act('sent',body.length); arm(); rq.on('error',reject); const hard=setTimeout(()=>rq.destroy(new Error('TIMEOUT: ответ дольше '+(prov.hardTimeout||360)+' с')),(prov.hardTimeout||360)*1000); rq.on('close',()=>{ clearTimeout(hard); clearTimeout(wd); delete aiReq[reqId] }); rq.end(body) });
-    send('',true) }catch(err){ send('',true,String(err.message||err)) } });
+      aiReq[reqId]=rq; act('sent',body.length); arm(); rq.on('error',reject); const hard=setTimeout(()=>rq.destroy(new Error('TIMEOUT: ответ дольше '+(prov.hardTimeout||360)+' с')),(prov.hardTimeout||360)*1000); rq.on('close',()=>{ clearTimeout(hard); clearTimeout(wd); delete aiReq[reqId] }); rq.end(body) }); break }catch(er){ const m=String(er&&er.message||er).match(/FREE_LIMIT[\s\S]*?Retry after (\d+)\s*s/i)||(/^HTTP 429/.test(String(er&&er.message))?[0,'30']:null); if(att<1&&m&&!finished){ const s=Math.min(90,+m[1]+1); act('wait',s); await new Promise(r=>setTimeout(r,s*1000)); continue } throw er } }
+    if(/pollinations/.test(prov.base||'')) global.__polLast=Date.now(); send('',true) }catch(err){ if(/pollinations/.test(prov.base||'')) global.__polLast=Date.now(); send('',true,String(err.message||err)) } });
 ipcMain.handle('ai:models',async(e,prov)=>{ try{ const r=await fetch(prov.base.replace(/\/+$/,'')+'/models',{headers:prov.key?{Authorization:'Bearer '+prov.key}:{}}); const j=await r.json(); return (j.data||j.models||[]).map(m=>m.id||m.name) }catch(err){ return {error:String(err)} } });
 const sitesUser=()=>path.join(app.getPath('userData'),'sites.json');
 ipcMain.handle('sites:get',()=>{ try{return fs.readFileSync(sitesUser(),'utf8')}catch{ return fs.readFileSync(path.join(__dirname,'sites.json'),'utf8') } });

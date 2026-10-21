@@ -1,7 +1,7 @@
 // ИванКод: менеджер инструментов, сборка, шаблоны
 const { app, ipcMain } = require('electron');
 const path=require('path'), fs=require('fs'), https=require('https'), http=require('http'), cp=require('child_process');
-const TROOT=()=>path.join(app.getPath('userData'),'tools');
+const TROOT=()=>app&&app.getPath?path.join(app.getPath('userData'),'tools'):(process.env.IVANCODE_TOOLS||path.join(require('os').tmpdir(),'ivancode-tools'));
 const W=process.platform==='win32';
 const TOOLS={
  jdk:{name:'JDK 17 (Eclipse Temurin)',url:'https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jdk/hotspot/normal/eclipse',dir:'jdk',bin:['bin'],env:{JAVA_HOME:''},check:'bin/java.exe'},
@@ -38,7 +38,9 @@ function webview2(){ if(!W) return {id:'webview2',name:'Microsoft Edge WebView2 
 async function installWebview2(log){ const f=path.join(require('os').tmpdir(),'MicrosoftEdgeWebview2Setup.exe'); log('Скачиваю установщик WebView2 от Microsoft…\n'); await download('https://go.microsoft.com/fwlink/p/?LinkId=2124703',f);
  const r=await run(f,['/silent','/install'],{},log); log('Установщик завершился с кодом '+r.code+'\n'); const w=webview2(); if(!w.found) throw new Error('установщик WebView2 отработал (код '+r.code+'), но WebView2 так и не появился — возможно, нужны права администратора или нет интернета'); log('✔ WebView2 установлен и найден: '+w.version+'\n'); return true }
 // что нужно ДО начала работы для выбранного способа
-function deps(way,kind){ rescan(); const need=way==='fast'?(kind==='phone'?[]:['webview2']):(kind==='phone'?['jdk','android','gradle']:['python','nsis']);
+function ponDep(){ const NB=require('./nativebuild.js'); const b=NB.ponBin(); let v=''; if(b&&!(/\.exe$/i.test(b)&&!W)){ try{ const r=cp.spawnSync(b,['версия'],{encoding:'utf8',timeout:15000,windowsHide:true}); v=String((r.stdout||'')+(r.stderr||'')).trim().split('\n')[0] }catch{} } else if(b) v='встроен'; return {id:'ponyatny',name:'Компилятор «Понятный»',found:!!(b&&v),path:b||'',version:v,why:'встроен в студию; если его нет — переустановите ИванКод',builtIn:true} }
+const WHY_KT={jdk:'Java 17 — на ней работает сборщик Android (подойдёт и встроенная в Android Studio)',android:'Android SDK — части Android для сборки APK (подойдёт SDK из Android Studio)',gradle:'Gradle 8.9+ — собирает APK (подойдёт Gradle, скачанный Android Studio)'};
+function deps(way,kind){ rescan(); if(way==='pon') return [ponDep()]; if(way==='cs') return [{...found('dotnet'),id:'dotnet',name:'.NET SDK 8',why:'собирает настоящую программу Windows (подойдёт .NET из Visual Studio); ставится в папку студии, без прав администратора',lastError:lastErr.dotnet||''}]; if(way==='kotlin') return ['jdk','android','gradle'].map(id=>({...found(id),id,name:TOOLS[id].name,why:WHY_KT[id],lastError:lastErr[id]||''})); const need=way==='fast'?(kind==='phone'?[]:['webview2']):(kind==='phone'?['jdk','android','gradle']:['python','nsis']);
  return need.map(id=>id==='webview2'?{...webview2(),why:'чтобы готовая программа открывалась в своём окне (без него — откроется в браузере)',optional:true}:{...found(id),id,name:TOOLS[id].name,why:'нужен для сборки способом «для опытных»',lastError:lastErr[id]||''}) }
 function buildEnv(base=process.env){ const env={...base}; const add=[];
  for(const id in TOOLS){ const f=found(id); if(!f.found) continue; const t=TOOLS[id];
@@ -87,7 +89,7 @@ function detect(root){ const has=f=>fs.existsSync(path.join(root,f)); const ls=f
  if(has('settings.gradle')||has('settings.gradle.kts')||has('build.gradle')||has('build.gradle.kts')) return 'android';
  if(ls.some(f=>/\.(csproj|sln)$/i.test(f))) return 'dotnet';
  if(has('package.json')){ try{ const p=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')); if((p.devDependencies||{}).electron||(p.dependencies||{}).electron) return 'electron' }catch{} return 'node' }
- if(ls.some(f=>/\.py$/i.test(f))) return 'python'; if(ls.some(f=>/\.nsi$/i.test(f))) return 'nsis'; return 'unknown' }
+ if(ls.some(f=>/\.pon$/i.test(f))) return 'ponyatny'; if(ls.some(f=>/\.py$/i.test(f))) return 'python'; if(ls.some(f=>/\.nsi$/i.test(f))) return 'nsis'; return 'unknown' }
 function targets(kind){ return ({
  android:[['debug','APK debug'],['release','APK release (подписанный)'],['bundle','AAB release (Google Play)']],
  dotnet:[['build','Сборка (проверка)'],['exe','EXE (один файл, win-x64)'],['portable','Портативный ZIP'],['installer','Установщик NSIS']],
@@ -95,6 +97,7 @@ function targets(kind){ return ({
  node:[['build','npm run build']],
  python:[['check','Проверка синтаксиса'],['exe','EXE (PyInstaller)'],['portable','Портативный ZIP'],['installer','Установщик NSIS']],
  web:[['exe','Программа для ПК (EXE, за секунды)'],['installer','Установщик для ПК'],['apk','APK для телефона (за секунды)']],
+ ponyatny:[['check','Проверка (ponyatny проверить)'],['exe','EXE настоящим компилятором (ponyatny собрать)'],['run','Запуск']],
  nsis:[['installer','makensis']],unknown:[]})[kind]||[] }
 function gradleCmd(root){ if(fs.existsSync(path.join(root,W?'gradlew.bat':'gradlew'))) return W?'gradlew.bat':'./gradlew'; return 'gradle' }
 function pyEntry(root,o){ if(o.main&&/\.py$/i.test(o.main)) return path.relative(root,path.resolve(root,o.main)); for(const f of ['main.py','run.py','app.py','__main__.py','manage.py']) if(fs.existsSync(path.join(root,f))) return f; const py=fs.readdirSync(root).filter(f=>/\.py$/i.test(f)&&!/^test/i.test(f)); return py[0]||'main.py' }
@@ -133,7 +136,8 @@ function cmdFor(root,kind,target,o={}){ const W=o.win!=null?o.win:process.platfo
   case 'python:exe': return `${pyi} --onefile --distpath "${pub}" "${ent}"`;
   case 'python:portable': return `${pyi} --onedir --distpath "${pub}" "${ent}" && ${mk}`;
   case 'python:installer': return `${pyi} --onedir --distpath "${pub}" "${ent}" && ${nsi(P.join(pubAbs,name))}`;
-  case 'nsis:installer': return 'makensis '+fs.readdirSync(root).filter(f=>/\.nsi$/i.test(f)).map(f=>`"${f}"`).join(' ') }
+  case 'ponyatny:check': case 'ponyatny:exe': case 'ponyatny:run': { const NB=require('./nativebuild.js'); const b=NB.ponBin(); const pon=fs.readdirSync(root).filter(f=>/\.pon$/i.test(f)); const main=pon.find(f=>/^(главная|main|программа)\.pon$/i.test(f))||pon[0]; const q=s=>'"'+s+'"'; if(!b) return null; return target==='check'?pon.map(f=>q(b)+' проверить '+q(f)).join(' && '):target==='run'?q(b)+' запустить '+q(main):(W?'':'mkdir -p ivancode-out && ')+q(b)+' собрать '+q(main)+' -o '+q((W?'ivancode-out\\':'ivancode-out/')+main.replace(/\.pon$/i,'')+(W?'.exe':'')) }
+ case 'nsis:installer': return 'makensis '+fs.readdirSync(root).filter(f=>/\.nsi$/i.test(f)).map(f=>`"${f}"`).join(' ') }
  return null }
 // ---- значок проекта (.ivancode/icon, файлы готовит окно студии через canvas) ----
 function iconDir(root){ return path.join(root,'.ivancode','icon') }

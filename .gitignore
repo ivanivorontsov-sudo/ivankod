@@ -5,3 +5,4 @@ dist/
 *.pfx
 *.p12
 .env
+bin/

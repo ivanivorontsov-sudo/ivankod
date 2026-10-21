@@ -4,7 +4,7 @@ const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',
 const sep=api.platform==='win32'?'\\':'/';
 const S={root:null,tabs:[],cur:null,cfg:{},attach:[],history:[],sites:[]};
 let monaco,ed;
-const LANG={js:'javascript',mjs:'javascript',cjs:'javascript',jsx:'javascript',ts:'typescript',tsx:'typescript',py:'python',cs:'csharp',json:'json',html:'html',htm:'html',css:'css',scss:'scss',md:'markdown',xml:'xml',csproj:'xml',yml:'yaml',yaml:'yaml',sh:'shell',bat:'bat',cmd:'bat',ps1:'powershell',sql:'sql',java:'java',kt:'kotlin',c:'c',h:'c',cpp:'cpp',hpp:'cpp',go:'go',rs:'rust',php:'php',rb:'ruby',lua:'lua',txt:'plaintext',ini:'ini',dockerfile:'dockerfile',swift:'swift',dart:'dart'};
+const LANG={js:'javascript',mjs:'javascript',cjs:'javascript',jsx:'javascript',ts:'typescript',tsx:'typescript',py:'python',cs:'csharp',json:'json',html:'html',htm:'html',css:'css',scss:'scss',md:'markdown',xml:'xml',csproj:'xml',yml:'yaml',yaml:'yaml',sh:'shell',bat:'bat',cmd:'bat',ps1:'powershell',sql:'sql',java:'java',kt:'kotlin',pon:'ponyatny',c:'c',h:'c',cpp:'cpp',hpp:'cpp',go:'go',rs:'rust',php:'php',rb:'ruby',lua:'lua',txt:'plaintext',ini:'ini',dockerfile:'dockerfile',swift:'swift',dart:'dart'};
 const extOf=p=>(p.split(/[\\/]/).pop().split('.').pop()||'').toLowerCase();
 const langOf=p=>LANG[extOf(p)]||'plaintext';
 const rel=p=>S.root&&p.startsWith(S.root)?p.slice(S.root.length+1).replace(/\\/g,'/'):p;

@@ -16,11 +16,11 @@ const SPEC={
   dirs:e=>[e.JAVA_HOME&&`${e.JAVA_HOME}\\bin\\java.exe`,`${e.ProgramFiles}\\Android\\Android Studio\\jbr\\bin\\java.exe`,`${e.LOCALAPPDATA}\\Programs\\Android Studio\\jbr\\bin\\java.exe`,`${e.ProgramFiles}\\Eclipse Adoptium\\jdk-*\\bin\\java.exe`,`${e.ProgramFiles}\\Microsoft\\jdk-*\\bin\\java.exe`,`${e.ProgramFiles}\\Java\\jdk-*\\bin\\java.exe`]},
  android:{exe:'adb.exe',lx:'adb',ver:['version'],ok:/Android Debug Bridge/,own:'android-sdk\\platform-tools\\adb.exe',home:2,noPath:true,
   dirs:e=>[e.ANDROID_HOME&&`${e.ANDROID_HOME}\\platform-tools\\adb.exe`,e.ANDROID_SDK_ROOT&&`${e.ANDROID_SDK_ROOT}\\platform-tools\\adb.exe`,`${e.LOCALAPPDATA}\\Android\\Sdk\\platform-tools\\adb.exe`]},
- gradle:{exe:'gradle.bat',lx:'gradle',ver:['--version'],ok:/Gradle \d/,own:'gradle\\bin\\gradle.bat',dirs:e=>[e.GRADLE_HOME&&`${e.GRADLE_HOME}\\bin\\gradle.bat`]},
+ gradle:{exe:'gradle.bat',lx:'gradle',ver:['--version'],ok:/Gradle (8\.(9|1\d)|9|1\d)/,own:'gradle\\bin\\gradle.bat',dirs:e=>[e.GRADLE_HOME&&`${e.GRADLE_HOME}\\bin\\gradle.bat`,`${e.USERPROFILE}\\.gradle\\wrapper\\dists\\gradle-*-bin\\*\\gradle-*\\bin\\gradle.bat`,`${e.USERPROFILE}\\.gradle\\wrapper\\dists\\gradle-*-all\\*\\gradle-*\\bin\\gradle.bat`]},
  node:{exe:'node.exe',lx:'node',ver:['--version'],ok:/^v\d+/m,own:'node\\node.exe',dirs:e=>[`${e.ProgramFiles}\\nodejs\\node.exe`,`${e.LOCALAPPDATA}\\Programs\\nodejs\\node.exe`]},
  git:{exe:'git.exe',lx:'git',ver:['--version'],ok:/git version/,own:'git\\cmd\\git.exe',dirs:e=>[`${e.ProgramFiles}\\Git\\cmd\\git.exe`,`${e.LOCALAPPDATA}\\Programs\\Git\\cmd\\git.exe`]},
  nsis:{exe:'makensis.exe',lx:'makensis',ver:['/VERSION'],ok:/v?3\.\d+/,own:'nsis\\makensis.exe',dirs:e=>[`${e['ProgramFiles(x86)']}\\NSIS\\makensis.exe`,`${e.ProgramFiles}\\NSIS\\makensis.exe`]},
- dotnet:{exe:'dotnet.exe',lx:'dotnet',ver:['--version'],ok:/^\d+\.\d+/m,own:'dotnet\\dotnet.exe',dirs:e=>[`${e.ProgramFiles}\\dotnet\\dotnet.exe`]}};
+ dotnet:{exe:'dotnet.exe',lx:'dotnet',ver:['--version'],ok:/^(8|9|[1-9]\d)\.\d+/m,own:'dotnet\\dotnet.exe',dirs:e=>[`${e.ProgramFiles}\\dotnet\\dotnet.exe`,`${e.USERPROFILE}\\.dotnet\\dotnet.exe`,`${e.LOCALAPPDATA}\\Microsoft\\dotnet\\dotnet.exe`]}};
 /** d: {W, env, exists, readdir, run(exe,args)->{code,out}, own(rel)->abs, where(name)->[paths]} → {id,found,path,version,source,tried:[{path,why}]} */
 function find(id,d){ const s=SPEC[id]; const e=d.env, tried=[]; const cands=[];
  const add=(p,src)=>{ if(p&&!cands.some(c=>c.p.toLowerCase()===p.toLowerCase())) cands.push({p,src}) };
