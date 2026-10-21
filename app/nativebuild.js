@@ -6,7 +6,7 @@ function writeTree(root,files){ for(const [rel,t] of Object.entries(files)){ con
 function run(cmd,args,o={}){ return new Promise(res=>{ const t0=Date.now(); let out=''; let p;
  try{ p=cp.spawn(cmd,args,{cwd:o.cwd,env:o.env||process.env,shell:o.shell||false,windowsHide:true}) }catch(e){ return res({code:-1,out:String(e.message),ms:0}) }
  const tm=o.timeout?setTimeout(()=>{ try{ W?cp.spawnSync('taskkill',['/pid',String(p.pid),'/T','/F']):p.kill('SIGKILL') }catch{} out+='\n[превышено время '+Math.round(o.timeout/1000)+' с]'; },o.timeout):null;
- const on=d=>{ const s=d.toString('utf8'); out+=s; if(o.onData) o.onData(s) }; p.stdout&&p.stdout.on('data',on); p.stderr&&p.stderr.on('data',on);
+ const dd=require('./tools.js').mkDec(); const on=d=>{ const s=dd(d); out+=s; if(o.onData) o.onData(s) }; p.stdout&&p.stdout.on('data',on); p.stderr&&p.stderr.on('data',on);
  if(o.input!=null){ try{ p.stdin.end(o.input) }catch{} } else { try{ p.stdin.end() }catch{} }
  p.on('error',e=>{ out+=String(e.message) }); p.on('close',code=>{ clearTimeout(tm); res({code:code==null?-1:code,out,ms:Date.now()-t0}) }) }) }
 // ---------- Kotlin ----------

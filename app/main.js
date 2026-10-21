@@ -8,12 +8,17 @@ function loadCfg(){ try{ const c=JSON.parse(fs.readFileSync(cfgFile(),'utf8'));
 function saveCfg(c){ const o=JSON.parse(JSON.stringify(c));
   for(const p of o.providers||[]) if(p.key){ if(safeStorage.isEncryptionAvailable()){p.keyEnc=safeStorage.encryptString(p.key).toString('base64'); delete p.key} }
   fs.mkdirSync(path.dirname(cfgFile()),{recursive:true}); fs.writeFileSync(cfgFile(),JSON.stringify(o,null,1)); return true }
+const SS=require('./safesend'); const wsend=SS.makeSend(()=>win);
+try{ SS.guard(process,path.join(app.getPath('userData'),'crash.log')) }catch{}
+function killAll(){ for(const k in procs) try{ procs[k].kill() }catch{} }
 function create(){
   win = new BrowserWindow({ width:1400, height:900, title:'ИванКод', backgroundColor:'#1e1e1e', icon:path.join(__dirname,'icon.png'),
     webPreferences:{ preload:path.join(__dirname,'preload.js'), contextIsolation:true, webviewTag:true, sandbox:false } });
   win.setMenuBarVisibility(false); win.loadFile(path.join(__dirname,'index.html'));
   win.webContents.setWindowOpenHandler(({url})=>{ shell.openExternal(url); return {action:'deny'} });
+  win.on('close',killAll); win.on('closed',()=>{ killAll(); win=null });
 }
+try{ if(process.platform==='win32') app.setAppUserModelId('ru.vorontsov.ivancode') }catch{}
 app.whenReady().then(()=>{ try{ T.refreshPath() }catch{} create() }); require('./fastmain').init(T); require('./nativemain').init(T); app.on('window-all-closed',()=>{ for(const k in procs) try{procs[k].kill()}catch{}; app.quit() });
 const IGN=new Set(['.ivancode','ivancode-out','.gradle','node_modules','.git','bin','obj','__pycache__','.venv','venv','dist','build','.vs']);
 ipcMain.handle('cfg:get',()=>loadCfg()); ipcMain.handle('cfg:set',(e,c)=>saveCfg(c));
@@ -52,9 +57,9 @@ ipcMain.handle('proc:start',(e,id,cmd,cwd)=>{ if(procs[id]) try{procs[id].kill()
   const isWin=process.platform==='win32';
   if(cmd) cmd=T.fixPy(cmd); const p = cmd ? cp.spawn(cmd,{cwd,shell:true,env:ENV()})
                : cp.spawn(isWin?'powershell.exe':'bash', isWin?['-NoLogo','-NoExit','-Command','[Console]::OutputEncoding=[Text.Encoding]::UTF8; function prompt{"PS "+$PWD+"> "}']:['-i'],{cwd,env:ENV()});
-  procs[id]=p; const send=d=>win&&win.webContents.send('proc:data',id,d.toString('utf8'));
+  procs[id]=p; const dd=T.mkDec(); const send=d=>wsend('proc:data',id,dd(d));
   p.stdout.on('data',send); p.stderr.on('data',send);
-  p.on('exit',c=>{ delete procs[id]; win&&win.webContents.send('proc:exit',id,c) }); p.on('error',er=>send(Buffer.from('\r\n[ошибка] '+er.message+'\r\n'))); return p.pid });
+  p.on('exit',c=>{ delete procs[id]; wsend('proc:exit',id,c) }); p.on('error',er=>send(Buffer.from('\r\n[ошибка] '+er.message+'\r\n'))); return p.pid });
 ipcMain.handle('proc:write',(e,id,d)=>{ procs[id]&&procs[id].stdin.write(d); return !!procs[id] });
 ipcMain.handle('proc:kill',(e,id)=>{ const p=procs[id]; if(!p) return false;
   if(process.platform==='win32') cp.exec('taskkill /pid '+p.pid+' /T /F'); else p.kill(); return true });
@@ -68,8 +73,8 @@ const giga={};
 const aiReq={};
 ipcMain.handle('ai:abort',(e,reqId)=>{ const q=aiReq[reqId]; if(q){ try{ q.destroy(new Error('ABORT: остановлено')) }catch{} delete aiReq[reqId]; return true } return false });
 ipcMain.handle('ai:chat',async(e,reqId,prov,messages)=>{
-  let finished=false; const send=(t,done,err)=>{ if(finished) return; if(done) finished=true; try{ win.webContents.send('ai:chunk',reqId,t,done,err) }catch{} };
-  const act=(kind,n)=>{ try{ win.webContents.send('ai:act',reqId,kind,n) }catch{} };
+  let finished=false; const send=(t,done,err)=>{ if(finished) return; if(done) finished=true; try{ wsend('ai:chunk',reqId,t,done,err) }catch{} };
+  const act=(kind,n)=>{ try{ wsend('ai:act',reqId,kind,n) }catch{} };
   try{
     let url=(prov.base||'').replace(/\/+$/,'')+'/chat/completions', headers={'Content-Type':'application/json'}, agent;
     if(prov.type==='gigachat'){ giga[prov.id]=giga[prov.id]||{...prov}; giga[prov.id].key=prov.key; const t=await gigaToken(giga[prov.id]);
@@ -153,15 +158,15 @@ if(process.env.IVANCODE_AGENT){ app.whenReady().then(async()=>{ const sc=JSON.pa
 ipcMain.handle('tools:list',()=>{ T.rescan(); return Object.entries(T.TOOLS).map(([id,t])=>{ const f=T.found(id); return {id,name:t.name,installed:f.found,path:f.path||'',version:f.version||''} }) });
 ipcMain.handle('tools:root',()=>T.TROOT());
 ipcMain.handle('deps:check',(e,way,kind)=>T.deps(way,kind));
-ipcMain.handle('tools:install',async(e,id)=>{ const log=(t,cr)=>win.webContents.send('tools:log',t,!!cr); try{ if(id==='webview2'){ await T.installWebview2(log); return {ok:true} } await T.install(id,log); return {ok:true} }catch(err){ log('\n✖ '+err.message+'\n'); return {ok:false,err:err.message} } });
+ipcMain.handle('tools:install',async(e,id)=>{ const log=(t,cr)=>wsend('tools:log',t,!!cr); try{ if(id==='webview2'){ await T.installWebview2(log); return {ok:true} } await T.install(id,log); return {ok:true} }catch(err){ log('\n✖ '+err.message+'\n'); return {ok:false,err:err.message} } });
 ipcMain.handle('proj:detect',(e,root)=>{ const k=T.detect(root); return {kind:k,targets:T.targets(k)} });
 ipcMain.handle('proj:tpl',(e,kind,root,name,opt)=>{ fs.mkdirSync(root,{recursive:true}); return T.tpl(kind,root,name,opt) });
 ipcMain.handle('icon:save',(e,root,files,cfg)=>T.iconSave(root,files,cfg));
 ipcMain.handle('icon:get',(e,root)=>{ const d=path.join(root,'.ivancode','icon'); try{ return {cfg:JSON.parse(fs.readFileSync(path.join(d,'icon.json'),'utf8')),src:fs.existsSync(path.join(d,'source.png'))?fs.readFileSync(path.join(d,'source.png')).toString('base64'):null} }catch{ return null } });
-ipcMain.handle('build:run',(e,root,kind,target,o)=>new Promise(res=>{ const wineRun=wc=>{ win.webContents.send('proc:data','build','▶ (wine) '+wc+'\n'); let out=''; fs.mkdirSync(path.join(root,'ivancode-out'),{recursive:true}); fs.writeFileSync(path.join(root,'ivancode-out','_b.cmd'),'@echo off\r\n'+wc+'\r\nexit /b %errorlevel%\r\n'); const p=cp.spawn('wine',['cmd','/c','ivancode-out\\_b.cmd'],{cwd:root,env:{...ENV(),WINEDEBUG:'-all',WINEPATH:'C:\\IvanTools\\python;C:\\IvanTools\\python\\Scripts;C:\\IvanTools\\nsis-3.10',PYTHONIOENCODING:'utf-8'}}); const h=d=>{ const s=d.toString('utf8'); out+=s; win.webContents.send('proc:data','build',s) }; p.stdout.on('data',h); p.stderr.on('data',h); p.on('exit',c=>{ if(c===0){ const post=T.postFor(root,kind,target,o||{}); if(post&&post.zip){ try{ T.zipDir(post.zip.src,post.zip.out) }catch(er){ c=1; out+='ZIP: '+er.message } } } res({code:c,out,errors:T.parseErrors(out,root),cmd:wc}) }) }; try{ T.applyIcon(root,kind) }catch(er){} try{ T.prepBuild(root,kind) }catch(er){} let cmd=T.cmdFor(root,kind,target,o||{}); if(!cmd) return res({code:-1,out:'нет команды для '+kind+':'+target});
+ipcMain.handle('build:run',(e,root,kind,target,o)=>new Promise(res=>{ const wineRun=wc=>{ wsend('proc:data','build','▶ (wine) '+wc+'\n'); let out=''; fs.mkdirSync(path.join(root,'ivancode-out'),{recursive:true}); fs.writeFileSync(path.join(root,'ivancode-out','_b.cmd'),'@echo off\r\n'+wc+'\r\nexit /b %errorlevel%\r\n'); const p=cp.spawn('wine',['cmd','/c','ivancode-out\\_b.cmd'],{cwd:root,env:{...ENV(),WINEDEBUG:'-all',WINEPATH:'C:\\IvanTools\\python;C:\\IvanTools\\python\\Scripts;C:\\IvanTools\\nsis-3.10',PYTHONIOENCODING:'utf-8'}}); const dd=T.mkDec(); const h=d=>{ const s=dd(d); out+=s; wsend('proc:data','build',s) }; p.stdout.on('data',h); p.stderr.on('data',h); p.on('exit',c=>{ if(c===0){ const post=T.postFor(root,kind,target,o||{}); if(post&&post.zip){ try{ T.zipDir(post.zip.src,post.zip.out) }catch(er){ c=1; out+='ZIP: '+er.message } } } res({code:c,out,errors:T.parseErrors(out,root),cmd:wc}) }) }; try{ T.applyIcon(root,kind) }catch(er){} try{ T.prepBuild(root,kind) }catch(er){} let cmd=T.cmdFor(root,kind,target,o||{}); if(!cmd) return res({code:-1,out:'нет команды для '+kind+':'+target});
   if(process.env.IVANCODE_WINEBUILD&&kind!=='android'){ const w=p=>'Z:'+p.replace(/\//g,'\\'); const wc=T.cmdFor(root,kind,target,{...(o||{}),win:true,winRoot:w(root)}).replace(/"(\/[^"]*)"/g,(m,p)=>'"'+w(p)+'"'); return wineRun(wc) }
-  cmd=T.fixPy(cmd); const show=cmd.replace(/password="[^"]*"/g,'password="***"'); win.webContents.send('proc:data','build','▶ '+show+'\n'); let out='';
-  const p=cp.spawn(cmd,{cwd:root,shell:true,env:ENV(),windowsHide:true}); procs.build=p; const h=d=>{ const s=d.toString('utf8'); out+=s; win.webContents.send('proc:data','build',s) };
+  cmd=T.fixPy(cmd); const show=cmd.replace(/password="[^"]*"/g,'password="***"'); wsend('proc:data','build','▶ '+show+'\n'); let out='';
+  const p=cp.spawn(cmd,{cwd:root,shell:true,env:ENV(),windowsHide:true}); procs.build=p; const dd=T.mkDec(); const h=d=>{ const s=dd(d); out+=s; wsend('proc:data','build',s) };
   p.stdout.on('data',h); p.stderr.on('data',h); p.on('error',er=>h(Buffer.from(String(er)))); p.on('exit',c=>{ delete procs.build; if(c===0){ const post=T.postFor(root,kind,target,o||{}); if(post&&post.zip){ try{ const z=T.zipDir(post.zip.src,post.zip.out); h(Buffer.from(`\n📦 Портативный ZIP: ${post.zip.out} (${z.files} файлов, ${(z.size/1048576).toFixed(1)} МБ)\n`)) }catch(er){ h(Buffer.from('\n✖ ZIP: '+er.message+'\n')); c=1 } } } res({code:c,out,errors:T.parseErrors(out,root),cmd:show}) }) }));
 // ---- UI-проверка веб-проекта: запускаем приложение, открываем страницу в скрытом окне, собираем ошибки JS и текст ----
 function uiStartCmd(root,port){ const has=f=>fs.existsSync(path.join(root,f)); const req=has('requirements.txt')?fs.readFileSync(path.join(root,'requirements.txt'),'utf8'):'';
@@ -209,7 +214,7 @@ ipcMain.handle('backup:restore',(e,root,d)=>{ const files=JSON.parse(fs.readFile
 ipcMain.handle('backup:list',(e,root)=>{ const d=path.join(root,'.ivancode','backup'); try{ return fs.readdirSync(d).sort().reverse().map(n=>path.join(d,n)) }catch{ return [] } });
 ipcMain.handle('app:version',()=>app.getVersion());
 ipcMain.handle('cmd:run',(e,cwd,cmd,timeoutMs)=>new Promise(res=>{ let out=''; cmd=T.fixPy(cmd); const p=cp.spawn(cmd,{cwd,shell:true,env:ENV(),windowsHide:true}); procs.agentcmd=p;
-  const h=d=>{ const s=d.toString('utf8'); out+=s; win.webContents.send('proc:data','build',s) }; p.stdout.on('data',h); p.stderr.on('data',h);
+  const dd=T.mkDec(); const h=d=>{ const s=dd(d); out+=s; wsend('proc:data','build',s) }; p.stdout.on('data',h); p.stderr.on('data',h);
   const t=setTimeout(()=>{ out+='\n[таймаут '+Math.round((timeoutMs||600000)/1000)+' с — процесс остановлен]'; try{ process.platform==='win32'?cp.exec('taskkill /pid '+p.pid+' /T /F'):p.kill('SIGKILL') }catch{} },timeoutMs||600000);
   p.on('error',er=>{ out+=String(er) }); p.on('exit',c=>{ clearTimeout(t); delete procs.agentcmd; res({code:c,out}) }) }));
 ipcMain.handle('fs:readmaybe',(e,f)=>{ try{ return ENC.read(f) }catch{ return null } });
@@ -223,7 +228,7 @@ function webEnsure(){ if(webV) return webV; webV=new WebContentsView({webPrefere
  win.contentView.addChildView(webV); webPlace(); return webV }
 function webPlace(){ if(!webV) return; if(webVis) webV.setBounds(webRect); else { const [w,h]=win.getContentSize(); webV.setBounds({x:w-2,y:h-2,width:900,height:800}) } } // скрыт: почти целиком за краем, но продолжает рендериться
 ipcMain.handle('sys:info',()=>({mem:require('os').totalmem(),cpus:require('os').cpus().length,platform:process.platform}));
-ipcMain.handle('ollama:setup',async(e,model)=>{ const say=t=>win.webContents.send('ollama:progress',t); const http=require('http');
+ipcMain.handle('ollama:setup',async(e,model)=>{ const say=t=>wsend('ollama:progress',t); const http=require('http');
  const up=()=>new Promise(r=>{ const q=http.get('http://127.0.0.1:11434/api/tags',x=>{ x.resume(); r(x.statusCode===200) }); q.on('error',()=>r(false)); q.setTimeout(3000,()=>{ q.destroy(); r(false) }) });
  try{ if(!(await up())){ if(process.platform==='win32'){ const f=path.join(app.getPath('temp'),'OllamaSetup.exe'); say('Скачиваю Ollama (~1 ГБ)…'); await T.download('https://ollama.com/download/OllamaSetup.exe',f,(a,b)=>say(`Скачиваю Ollama: ${b?Math.round(a*100/b):Math.round(a/1048576)}${b?'%':' МБ'}`)); say('Устанавливаю Ollama…'); await new Promise((r,j)=>cp.execFile(f,['/VERYSILENT','/NORESTART','/SUPPRESSMSGBOXES'],er=>er?j(er):r())); }
    else { const b=['/usr/local/bin/ollama',path.join(require('os').homedir(),'ollama','bin','ollama')].find(x=>fs.existsSync(x)); if(!b) throw new Error('Ollama не найдена: установите с ollama.com'); cp.spawn(b,['serve'],{detached:true,stdio:'ignore'}).unref() }

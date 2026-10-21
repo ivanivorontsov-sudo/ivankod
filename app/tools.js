@@ -1,7 +1,17 @@
 // ИванКод: менеджер инструментов, сборка, шаблоны
 const { app, ipcMain } = require('electron');
 const path=require('path'), fs=require('fs'), https=require('https'), http=require('http'), cp=require('child_process');
-const TROOT=()=>app&&app.getPath?path.join(app.getPath('userData'),'tools'):(process.env.IVANCODE_TOOLS||path.join(require('os').tmpdir(),'ivancode-tools'));
+// 1.3.1: Gradle, Android SDK и эмулятор ломаются на путях с русскими буквами и пробелами (C:\Users\Иван Дубль\AppData\Roaming\ИванКод).
+// Поэтому на Windows инструменты живут в папке только из латиницы: C:\ProgramData\IvanCode\tools (или C:\IvanCode\tools); старая папка переносится.
+const asciiOk=s=>/^[A-Za-z0-9:\\\/._-]*$/.test(String(s));
+function pickAsciiRoot(env=process.env,exists=fs.existsSync,mk=d=>fs.mkdirSync(d,{recursive:true})){ const sd=env.SystemDrive||'C:'; for(const b of [env.ProgramData,sd+'\\IvanCode'].filter(Boolean)){ const d=/IvanCode$/i.test(b)?b:path.win32.join(b,'IvanCode'); if(!asciiOk(d)) continue; try{ mk(d); const f=path.win32.join(d,'.w'); fs.writeFileSync(f,'1'); fs.unlinkSync(f); return d }catch{} } return null }
+// запасной путь: короткое имя 8.3 (C:\Users\IVAN~1\…) — без кириллицы и пробелов, если оно включено на диске
+function shortPath(p){ if(!W) return p; try{ const r=cp.spawnSync(process.env.ComSpec||'cmd.exe',['/d','/s','/c','"for %I in ("'+p+'") do @echo %~sI"'],{encoding:'utf8',windowsHide:true,timeout:8000,windowsVerbatimArguments:true}); const s=String(r.stdout||'').trim().split(/\r?\n/).pop(); return s&&asciiOk(s)?s:null }catch{ return null } }
+let _troot=null;
+function TROOT(){ if(_troot) return _troot; if(process.env.IVANCODE_TOOLS) return _troot=process.env.IVANCODE_TOOLS; if(!(app&&app.getPath)) return path.join(require('os').tmpdir(),'ivancode-tools');
+ const old=path.join(app.getPath('userData'),'tools'); if(!W||asciiOk(old)) return _troot=old; const base=pickAsciiRoot(); if(!base){ try{ fs.mkdirSync(old,{recursive:true}) }catch{} return _troot=shortPath(old)||old } const nw=path.win32.join(base,'tools');
+ try{ if(fs.existsSync(old)&&!fs.existsSync(nw)){ try{ fs.renameSync(old,nw) }catch{ fs.cpSync(old,nw,{recursive:true}); fs.rmSync(old,{recursive:true,force:true}) } } }catch(e){ console.warn('перенос инструментов:',e.message) } return _troot=nw }
+const ASCIIBASE=()=>path.dirname(TROOT());
 const W=process.platform==='win32';
 const TOOLS={
  jdk:{name:'JDK 17 (Eclipse Temurin)',url:'https://api.adoptium.net/v3/binary/latest/17/ga/windows/x64/jdk/hotspot/normal/eclipse',dir:'jdk',bin:['bin'],env:{JAVA_HOME:''},check:'bin/java.exe'},
@@ -20,7 +30,7 @@ function regPath(){ if(!W) return []; const out=[]; for(const k of ['HKCU\\Envir
 function refreshPath(){ if(!W) return; const pk=Object.keys(process.env).find(k=>k.toUpperCase()==='PATH')||'Path'; process.env[pk]=TF.mergePath(process.env[pk],regPath(),true);
  for(const v of ['JAVA_HOME','ANDROID_HOME','ANDROID_SDK_ROOT','GRADLE_HOME']) if(!process.env[v]){ try{ const r=cp.spawnSync('reg',['query','HKCU\\Environment','/v',v],{encoding:'utf8',windowsHide:true,timeout:5000}); const m=String(r.stdout||'').match(/REG_(?:EXPAND_)?SZ\s+(.*)/); if(m) process.env[v]=TF.expand(m[1].trim(),process.env) }catch{} } }
 // gradle/sdkmanager — java-программы: проверяем их с проверенной JDK 17+, а не со старой JAVA_HOME (иначе «Gradle старый», хотя виновата Java)
-function runEnv(id){ if(id==='jdk') return undefined; const jh=process.env.JAVA_HOME; if(!jh||(javaMajor(jh)||0)>=17) return undefined; const j=goodJdk(); return j?{...process.env,JAVA_HOME:j.home}:undefined }
+function runEnv(id){ if(id==='jdk') return undefined; const jh=process.env.JAVA_HOME; if(jh&&(javaMajor(jh)||0)>=17) return undefined; const j=goodJdk(); if(!j) return undefined; const env={...process.env,JAVA_HOME:j.home}; const pk=Object.keys(env).find(k=>k.toUpperCase()==='PATH')||'PATH'; env[pk]=path.join(j.home,'bin')+path.delimiter+(env[pk]||''); return env }
 function realDeps(id){ const env=runEnv(id); return {W,env:process.env,exists:p=>{ try{ return fs.existsSync(p) }catch{ return false } },readdir:d=>fs.readdirSync(d),own:rel=>path.join(TROOT(),...rel.split('\\')),
  run:(exe,args)=>{ try{ const bat=/\.(bat|cmd)$/i.test(exe); const r=bat?cp.spawnSync('"'+exe+'" '+args.join(' '),{shell:true,encoding:'utf8',timeout:20000,windowsHide:true,env}):cp.spawnSync(exe,args,{encoding:'utf8',timeout:20000,windowsHide:true,env}); return {code:r.status==null?-1:r.status,out:(r.stdout||'')+(r.stderr||'')+(r.error?String(r.error.message):'')} }catch(e){ return {code:-1,out:String(e.message)} } },
  where:n=>{ try{ const r=W?cp.spawnSync('where',[n],{encoding:'utf8',windowsHide:true,timeout:8000}):cp.spawnSync('which',['-a',n],{encoding:'utf8',timeout:8000}); return r.status===0?String(r.stdout).split(/\r?\n/).map(x=>x.trim()).filter(Boolean):[] }catch{ return [] } }} }
@@ -57,6 +67,8 @@ function buildEnv(base=process.env){ const env={...base}; const add=[];
  { const ok=d=>d&&fs.existsSync(d); if(!ok(env.ANDROID_HOME)&&ok(env.ANDROID_SDK_ROOT)) env.ANDROID_HOME=env.ANDROID_SDK_ROOT; if(env.ANDROID_HOME) env.ANDROID_SDK_ROOT=env.ANDROID_HOME; else if(env.ANDROID_SDK_ROOT&&!ok(env.ANDROID_SDK_ROOT)) delete env.ANDROID_SDK_ROOT } // разные пути к SDK ломают gradle
  if(env.ANDROID_HOME) add.push(path.join(env.ANDROID_HOME,'build-tools','35.0.0'));
  const pk=Object.keys(env).find(k=>k.toUpperCase()==='PATH')||'PATH'; env[pk]=add.concat([env[pk]||'']).join(path.delimiter);
+ { const j=goodJdk(); if(j){ env.JAVA_HOME=j.home; add.unshift(path.join(j.home,'bin')) } }
+ if(W){ const home=env.USERPROFILE||require('os').homedir(); if(!asciiOk(home)){ const b=ASCIIBASE(); if(asciiOk(b)){ if(!env.GRADLE_USER_HOME||!asciiOk(env.GRADLE_USER_HOME)) env.GRADLE_USER_HOME=path.win32.join(b,'gradle-home'); if(!env.ANDROID_USER_HOME||!asciiOk(env.ANDROID_USER_HOME)) env.ANDROID_USER_HOME=path.win32.join(b,'android-home'); env.ANDROID_AVD_HOME=path.win32.join(env.ANDROID_USER_HOME,'avd') } } }
  env.PYTHONIOENCODING='utf-8'; env.PYTHONUNBUFFERED='1'; env.DOTNET_CLI_TELEMETRY_OPTOUT='1'; return env }
 // интерпретатор Python: на Linux часто есть только python3, на Windows — встроенный (IvanTools), python или py -3
 // настоящий Python (не заглушка Store): полный путь в кавычках; нет Python — 'python' (студия сообщит пользователю, а не ИИ)
@@ -65,27 +77,38 @@ function fixPy(cmd){ const py=pyCmd(); if(!cmd) return cmd; return String(cmd).r
 function download(url,file,onp,redirects=0){ return new Promise((res,rej)=>{ const mod=url.startsWith('https')?https:http;
  const rq=mod.get(url,{headers:{'User-Agent':'IvanCode/1.0'}},r=>{ if(r.statusCode>=300&&r.statusCode<400&&r.headers.location){ r.resume(); if(redirects>10) return rej(new Error('много редиректов')); return res(download(new URL(r.headers.location,url).href,file,onp,redirects+1)) }
   if(r.statusCode!==200){ r.resume(); return rej(new Error('HTTP '+r.statusCode+' '+url)) } const tot=+r.headers['content-length']||0; let got=0; const ws=fs.createWriteStream(file);
-  r.on('data',c=>{ got+=c.length; onp&&onp(got,tot) }); r.pipe(ws); ws.on('finish',()=>res(file)); ws.on('error',rej); r.on('error',rej) }); rq.on('error',rej) }) }
-function run(cmd,args,opt,onl){ return new Promise(res=>{ const p=cp.spawn(cmd,args,{...opt,windowsHide:true}); let o='';
- const h=d=>{ const s=d.toString('utf8'); o+=s; onl&&onl(s) }; p.stdout&&p.stdout.on('data',h); p.stderr&&p.stderr.on('data',h);
+  r.on('data',c=>{ got+=c.length; onp&&onp(got,tot) }); r.pipe(ws); ws.on('finish',()=>{ if(tot&&got!==tot){ try{ fs.unlinkSync(file) }catch{} return rej(new Error('загрузка оборвалась: получено '+(got/1048576).toFixed(1)+' из '+(tot/1048576).toFixed(1)+' МБ (связь прервалась, прокси или антивирус). Нажмите «Установить» ещё раз')) } res(file) }); r.on('aborted',()=>rej(new Error('загрузка оборвалась (связь прервалась)'))); ws.on('error',rej); r.on('error',rej) }); rq.on('error',rej) }) }
+// вывод cmd.exe/.bat на русской Windows — в OEM-кодировке cp866; без перекодировки в журнале «�»
+// поток: UTF-8 с учётом разрезанных на куски букв; встретились байты не UTF-8 — дальше читаем этот поток как cp866
+function mkDec(){ let u=new TextDecoder('utf-8',{fatal:true}), oem=null; return b=>{ if(!oem){ try{ return u.decode(b,{stream:true}) }catch{ try{ oem=new TextDecoder('ibm866') }catch{ oem={decode:x=>Buffer.from(x).toString('latin1')} } } } return oem.decode(b,{stream:true}) } }
+function dec(b){ return mkDec()(b) }
+// .bat через cmd /d /s /c "…" с кавычками вокруг каждого пути (пробелы, кириллица); без windowsVerbatimArguments Node ломает кавычки
+const qa=a=>/[\s&()^|<>"]/.test(a)?'"'+String(a).replace(/"/g,'""')+'"':String(a);
+function batCmd(bat,args){ return ['/d','/s','/c','"'+[qa(bat),...args.map(qa)].join(' ')+'"'] }
+function runBat(bat,args,opt,onl){ if(!W) return run(bat,args,opt,onl); return run(process.env.ComSpec||'cmd.exe',batCmd(bat,args),{...opt,windowsVerbatimArguments:true},onl) }
+function run(cmd,args,opt,onl){ return new Promise(res=>{ const p=cp.spawn(cmd,args,{...opt,windowsHide:true}); let o=''; const dd=mkDec();
+ const h=d=>{ const s=dd(d); o+=s; onl&&onl(s) }; p.stdout&&p.stdout.on('data',h); p.stderr&&p.stderr.on('data',h);
  if(opt.input!=null){ p.stdin.write(opt.input); p.stdin.end() } p.on('exit',c=>res({code:c,out:o})); p.on('error',e=>res({code:-1,out:o+String(e)})) }) }
 async function extract(zip,dest){ fs.mkdirSync(dest,{recursive:true}); // tar.exe (bsdtar) есть в Windows 10 1803+
  let r=await run(W?'tar.exe':'unzip',W?['-xf',zip,'-C',dest]:['-q','-o',zip,'-d',dest],{});
  if(r.code!==0&&W) r=await run('powershell.exe',['-NoProfile','-Command',`Expand-Archive -LiteralPath '${zip}' -DestinationPath '${dest}' -Force`],{}); if(r.code!==0) throw new Error('распаковка: '+r.out.slice(-400)) }
 function hoist(dest,sub){ // если в архиве одна папка верхнего уровня — поднимаем содержимое
  const src=sub?path.join(dest,sub):(()=>{ const e=fs.readdirSync(dest); return e.length===1&&fs.statSync(path.join(dest,e[0])).isDirectory()?path.join(dest,e[0]):null })();
- if(!src) return; for(const n of fs.readdirSync(src)) fs.renameSync(path.join(src,n),path.join(dest,n+(fs.existsSync(path.join(dest,n))?'_':''))); fs.rmSync(src,{recursive:true,force:true}) }
+ if(!src) return; for(const n of fs.readdirSync(src)) renameRetry(path.join(src,n),path.join(dest,n+(fs.existsSync(path.join(dest,n))?'_':''))); fs.rmSync(src,{recursive:true,force:true,maxRetries:10,retryDelay:300}) }
+// Защитник Windows проверяет свежераспакованные файлы и держит их — rename падает с EPERM/EBUSY; ждём и повторяем
+function renameRetry(a,b){ for(let i=0;;i++){ try{ return fs.renameSync(a,b) }catch(e){ if(i>=20||!/EPERM|EBUSY|EACCES/.test(e.code)) throw e; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,250) } } }
 function ruErr(e){ const m=String(e&&e.message||e); if(/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up/i.test(m)) return 'нет связи с сайтом загрузки (проверьте интернет, прокси или антивирус): '+m; if(/EACCES|EPERM|EBUSY/i.test(m)) return 'нет доступа к папке (её держит антивирус или другая программа, либо нет прав): '+m; if(/ENOSPC/i.test(m)) return 'на диске не хватает места'; if(/HTTP 4\d\d/.test(m)) return 'файл для загрузки недоступен ('+m+')'; if(/HTTP 5\d\d/.test(m)) return 'сайт загрузки временно не работает ('+m+')'; return m }
+function tail(s,n=6){ return String(s||'').replace(/\r/g,'').split('\n').map(x=>x.trim()).filter(x=>x&&!/^\[=*\s*\]|^\d+%/.test(x)).slice(-n).join(' | ').slice(-700)||'(sdkmanager ничего не написал)' }
 async function install(id,log){ try{ return await install0(id,log) }catch(e){ const m=ruErr(e); lastErr[id]=m; throw new Error(m) } }
 async function install0(id,log){ const t=TOOLS[id]; for(const n of t.needs||[]) if(!installed(n)){ log(`Сначала ставлю зависимость: ${TOOLS[n].name}\n`); await install0(n,log) }
  const dest=tdir(id); fs.mkdirSync(TROOT(),{recursive:true}); const tmp=path.join(TROOT(),'_dl'); fs.mkdirSync(tmp,{recursive:true}); log(`== ${t.name} → ${dest}\n`);
  if(t.script){ const ps=path.join(tmp,'dotnet-install.ps1'); await download('https://dot.net/v1/dotnet-install.ps1',ps); { const b=fs.readFileSync(ps); if(!(b[0]===0xEF&&b[1]===0xBB&&b[2]===0xBF)) fs.writeFileSync(ps,Buffer.concat([Buffer.from([0xEF,0xBB,0xBF]),b])) }
   const r=await run('powershell.exe',['-NoProfile','-ExecutionPolicy','Bypass','-File',ps,'-Channel','8.0','-InstallDir',dest],{},log); if(r.code) throw new Error('dotnet-install код '+r.code) }
  else { const zip=path.join(tmp,id+'.zip'); let last=0; await download(t.url,zip,(g,tot)=>{ const p=tot?Math.floor(g*100/tot):Math.floor(g/1048576); if(p!==last){ last=p; log(`\r${tot?p+'%':p+' МБ'} (${(g/1048576).toFixed(1)} МБ)`,true) } }); log('\nРаспаковка…\n');
-  if(id==='android'){ const cl=path.join(dest,'cmdline-tools'); fs.rmSync(cl,{recursive:true,force:true}); await extract(zip,cl); fs.renameSync(path.join(cl,'cmdline-tools'),path.join(cl,'latest'));
+  if(id==='android'){ const cl=path.join(dest,'cmdline-tools'); fs.rmSync(cl,{recursive:true,force:true}); await extract(zip,cl); renameRetry(path.join(cl,'cmdline-tools'),path.join(cl,'latest'));
    const sdkm=path.join(cl,'latest','bin','sdkmanager.bat'); rescan(); const env=javaEnv(); log('Java для sdkmanager: '+env.JAVA_HOME+'\n'); const yes='y\n'.repeat(60);
-   log('Принимаю лицензии Android SDK…\n'); await run('cmd.exe',['/c',sdkm,'--sdk_root='+dest,'--licenses'],{env,input:yes},log);
-   log('Скачиваю platform-tools, build-tools;35.0.0, platforms;android-35…\n'); const r=await run('cmd.exe',['/c',sdkm,'--sdk_root='+dest,'platform-tools','build-tools;35.0.0','platforms;android-35'],{env,input:yes},log); if(r.code) throw new Error('sdkmanager код '+r.code) }
+   log('Принимаю лицензии Android SDK…\n'); await runBat(sdkm,['--sdk_root='+dest,'--licenses'],{env,input:yes},log);
+   log('Скачиваю platform-tools, build-tools;35.0.0, platforms;android-35…\n'); const r=await runBat(sdkm,['--sdk_root='+dest,'platform-tools','build-tools;35.0.0','platforms;android-35'],{env,input:yes},log); if(r.code) throw new Error('sdkmanager код '+r.code+': '+tail(r.out)) }
   else { fs.rmSync(dest,{recursive:true,force:true}); await extract(zip,dest); if(!t.flat) hoist(dest,t.sub) }
   try{ fs.unlinkSync(zip) }catch{} }
  rescan(); if(!fs.existsSync(path.join(tdir(id),t.check))) throw new Error('файлы скачаны, но '+t.check+' не появился в '+dest+' — установка не удалась');
@@ -255,4 +278,4 @@ function tpl(kind,root,name,opt){ opt=opt||{}; const W_=(f,t)=>{ const p=path.jo
 function prepBuild(root,kind){ if(kind==='android'){ const gp=path.join(root,'gradle.properties'); let t=fs.existsSync(gp)?fs.readFileSync(gp,'utf8'):'';
   const add=[]; if(!/android\.overridePathCheck/.test(t)) add.push('android.overridePathCheck=true'); if(!/android\.useAndroidX/.test(t)) add.push('android.useAndroidX=true'); if(!/org\.gradle\.jvmargs/.test(t)) add.push('org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8');
   if(add.length) fs.writeFileSync(gp,t.replace(/\s*$/,'\n')+add.join('\n')+'\n') } }
-module.exports={javaMajor,goodJdk,javaEnv,deps,webview2,installWebview2,report,rescan,refreshPath,found,pyCmd,fixPy,prepBuild,translit:(n)=>String(n).toLowerCase().split('').map(c=>({а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'e',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'h',ц:'ts',ч:'ch',ш:'sh',щ:'sch',ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya'})[c]??c).join('').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'app',iconSave,applyIcon,iconIco,zipDir,postFor,pyEntry,TOOLS,installed,install,buildEnv,detect,targets,cmdFor,parseErrors,tpl,run,TROOT,download};
+module.exports={mkDec,renameRetry,shortPath,dec,batCmd,runBat,asciiOk,pickAsciiRoot,javaMajor,goodJdk,javaEnv,deps,webview2,installWebview2,report,rescan,refreshPath,found,pyCmd,fixPy,prepBuild,translit:(n)=>String(n).toLowerCase().split('').map(c=>({а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'e',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'h',ц:'ts',ч:'ch',ш:'sh',щ:'sch',ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya'})[c]??c).join('').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'app',iconSave,applyIcon,iconIco,zipDir,postFor,pyEntry,TOOLS,installed,install,buildEnv,detect,targets,cmdFor,parseErrors,tpl,run,TROOT,download};

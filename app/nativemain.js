@@ -3,7 +3,7 @@ const { ipcMain, app, BrowserWindow } = require('electron');
 const path=require('path'), fs=require('fs');
 const NB=require('./nativebuild.js');
 function init(T){
- const send=(ch,...a)=>{ for(const w of BrowserWindow.getAllWindows()) try{ w.webContents.send(ch,...a) }catch{} };
+ const SS=require('./safesend'); const send=(ch,...a)=>{ for(const w of BrowserWindow.getAllWindows()) if(SS.alive(w)) try{ w.webContents.send(ch,...a) }catch{} };
  const ktEnv=()=>{ const env=T.buildEnv(); const g=T.found('gradle'); if(g&&g.found) env.IVANCODE_GRADLE=g.path; return env };
  // 1.3.1: проверка компьютера и исправления (после каждого — повторная проверка)
  const D=require('./diag.js');
