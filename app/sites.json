@@ -1,0 +1,13 @@
+{
+ "_комментарий": "Сайты веб-чатов ИИ. Поля input/send/answer/busy — необязательные CSS-селекторы; если пусто или сайт изменился, используются встроенные эвристики. Файл можно править в Настройках.",
+ "sites": [
+  {"id":"deepseek","name":"DeepSeek","url":"https://chat.deepseek.com/","input":"textarea","send":"","answer":".ds-markdown","busy":""},
+  {"id":"qwen","name":"Qwen","url":"https://chat.qwen.ai/","input":"textarea#chat-input,textarea","send":".send-button,#send-message-button,button[aria-label=Send]","answer":".response-message-content.phase-answer","busy":""},
+  {"id":"gigachat","name":"GigaChat","url":"https://giga.chat/","input":"","send":"","answer":"","busy":""},
+  {"id":"chatgpt","name":"ChatGPT","url":"https://chatgpt.com/","input":"#prompt-textarea","send":"[data-testid=send-button]","answer":"[data-message-author-role=assistant] .markdown","busy":"[data-testid=stop-button]"},
+  {"id":"alice","name":"Алиса (Яндекс)","url":"https://alice.yandex.ru/","input":"","send":"","answer":"","busy":""},
+  {"id":"grok","name":"Grok","url":"https://grok.com/","input":"","send":"","answer":".message-bubble","busy":""},
+  {"id":"claude","name":"Claude","url":"https://claude.ai/new","input":"div[contenteditable=true]","send":"","answer":".font-claude-response","busy":"[data-is-streaming=true]"},
+  {"id":"mistral","name":"Mistral Le Chat","url":"https://chat.mistral.ai/chat","input":"","send":"","answer":"","busy":""}
+ ]
+}

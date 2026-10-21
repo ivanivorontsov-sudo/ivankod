@@ -1,0 +1,77 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>ИванКод</title>
+<link rel="stylesheet" href="vendor/xterm.css"><link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="style.css"></head><body class="ivanchai">
+<div id="simple" class="hidden">
+ <div class="s-top"><div class="s-logo">✨ <b id="s-appname">ИванКод</b></div><button id="s-expert" class="s-link" title="Файлы, код, сборка, логи">Режим для опытных →</button></div>
+ <div id="s-start" class="s-page">
+  <h1>Какую программу сделать?</h1>
+  <p class="s-sub">Опишите обычными словами — ИИ сам напишет, проверит и соберёт готовую программу.</p>
+  <textarea id="s-desc" placeholder="Например: программа для учёта домашних расходов — добавлять траты с категориями, видеть сумму за месяц и диаграмму по категориям"></textarea>
+  <div class="s-kind"><button data-k="pc" class="on"><span>💻</span>Для компьютера<small>Программа для Windows с установщиком</small></button><button data-k="phone"><span>📱</span>Для телефона<small>Приложение для Android (APK)</small></button></div>
+  <div id="s-acct" class="s-acct"><b>Вход в аккаунт ИИ:</b><button data-m="auto">🔎 Определить сам</button><button data-m="yes">✅ Есть вход</button><button data-m="no">👤 Нет входа</button><label class="s-aisel">Какой ИИ: <select id="s-ai"></select></label><label class="s-aisel" title="Второй ИИ: отвечает на вопросы ИИ-программиста и проверяет каждый шаг. Сам код не пишет.">🛡 Контролёр: <select id="s-ctrl"><option value="auto">Авто</option><option value="off">выкл</option></select></label><button id="s-login" class="s-link">Войти в аккаунт…</button><button id="s-offline" class="s-link" title="Открытая модель Qwen2.5-Coder через Ollama: без интернета и аккаунта">🖥 Офлайн-ИИ на этом ПК…</button><div id="s-acct-note" class="s-note"></div><small>С входом (свой аккаунт DeepSeek, Qwen и др. — войти один раз во встроенном окне) ИИ отвечает длинно — программа пишется быстрее, целыми файлами. Без входа студия пишет маленькими шагами: дольше, но тоже работает.</small></div>
+  <div class="s-row"><label class="s-aisel" title="Быстро: программа-окно на HTML/JS, пишется одним ответом ИИ и собирается за секунды без установки инструментов. Для опытных: Python/Kotlin, нужны Python/JDK/Android SDK.">Способ: <select id="s-way"><option value="fast">⚡ Быстро (рекомендуется)</option><option value="classic">🧩 Для опытных: Python / Kotlin</option></select></label></div>
+  <div class="s-row"><input id="s-name" placeholder="Название (необязательно)"><button id="s-go" class="s-pri">Создать программу</button></div>
+  <div id="s-recent"></div>
+ </div>
+ <div id="s-work" class="s-page hidden">
+  <h1 id="s-title">Делаю программу…</h1>
+  <ol class="s-steps"><li data-s="plan"><i></i><div><b>Планирую</b><small></small></div></li><li data-s="write"><i></i><div><b>Пишу</b><small></small></div></li><li data-s="check"><i></i><div><b>Проверяю</b><small></small></div></li><li data-s="build"><i></i><div><b>Собираю</b><small></small></div></li><li data-s="done"><i></i><div><b>Готово</b><small></small></div></li></ol>
+  <div id="s-live" class="s-live hidden">
+   <div class="s-live-head"><span id="s-prov">🤖 ИИ: —</span><span id="s-time"></span></div>
+   <div id="s-confirm" class="s-confirm hidden"></div>
+   <div id="s-error" class="s-error hidden"><div id="s-error-t"></div><button id="s-retry" class="s-pri">🔄 Повторить</button></div>
+   <div id="s-planbox" class="hidden"><b>План работы</b><ol id="s-plan"></ol></div>
+   <b>Что происходит сейчас</b><div id="s-log" class="s-log"></div><div id="s-livel" class="s-livel"></div>
+   <div class="s-live-btns"><button id="s-stop">⏹ Остановить</button><button id="s-chat">💬 Показать чат ИИ</button></div>
+  </div>
+  <div id="s-msg" class="s-msg"></div>
+  <div id="s-final" class="hidden"><div class="s-btns"><button id="s-run" class="s-pri">▶ Запустить</button><button id="s-open">📂 Открыть папку с программой</button><button id="s-improve" class="s-pri2">✨ Улучшить</button><button id="s-icon">🎨 Поменять значок</button></div>
+   <img id="s-shot" class="s-shot hidden" alt="Так выглядит программа">
+   <div class="s-change"><textarea id="s-ask" placeholder="Что изменить? Например: сделай кнопки крупнее и добавь поиск"></textarea><button id="s-ask-go">Попросить изменить</button></div>
+   <button id="s-new" class="s-link">+ Новая программа</button></div>
+ </div>
+</div>
+<div id="top"><b id="appname">ИванКод</b><button id="b-simple" title="Простой режим: описал — получил программу">✨ Простой режим</button><button id="b-aiview" title="Смотреть, что ИИ пишет прямо сейчас">💬 Показать чат ИИ</button>
+ <button data-act="open">📂 Открыть папку</button><button data-act="newfile">＋ Файл</button><button data-act="save">💾 Сохранить</button>
+ <button data-act="run" title="F5">▶ Запустить</button><button data-act="stop">■ Стоп</button><button data-act="palette" title="Ctrl+P">🔎 Быстрый переход</button>
+ <span class="sp"></span><button data-act="theme" title="Темы оформления">🎨 Тема</button><button data-act="focus" title="Режим фокуса (Ctrl+Shift+Enter)">◎ Фокус</button>
+ <button data-act="settings">⚙ Настройки</button><button data-act="about">ⓘ</button></div>
+<div id="main">
+ <div id="actbar"><button data-side="files" class="on" title="Проводник">📁</button><button data-side="search" title="Поиск">🔍</button><button data-side="git" title="Git">⑂</button><button data-side="build" title="Сборка и автоисправление">🛠</button></div>
+ <div id="side"><div id="side-files" class="pane"><div class="ph" id="rootname">Папка не открыта</div><div id="tree"></div></div>
+  <div id="side-search" class="pane hidden"><input id="sq" placeholder="Искать в проекте (Enter)"><label><input type="checkbox" id="sre"> regex</label> <label><input type="checkbox" id="scase"> Aa</label>
+   <input id="srep" placeholder="Заменить на…"><button id="srepall">Заменить во всех</button><div id="sres"></div></div>
+  <div id="side-build" class="pane hidden"><div class="ph">Сборка</div><div id="bkind" class="hint">Откройте папку проекта</div><button id="bicon" title="Значок приложения: Android, Windows .ico, фавикон">🎨 Значок…</button><div id="btargets"></div>
+   <label><input type="checkbox" id="bfix" checked> 🔁 Автоисправление ошибок ИИ</label><label>Попыток: <input id="bn" type="number" value="5" min="1" max="20" style="width:55px"></label>
+   <div class="hint">Сборка → разбор ошибок → ИИ (выбранный в чате: веб-чат или API) → применение исправлений с резервной копией → повтор.</div>
+   <div id="bks" class="hidden"><div class="ph">Подпись APK</div><input id="ksfile" placeholder="путь к keystore (.jks)"><input id="ksalias" placeholder="alias" value="key0"><input id="kspass" type="password" placeholder="пароль"><button id="ksnew">🔑 Мастер создания keystore</button></div>
+   <div class="row"><button id="bundo">↶ Откатить последнее автоисправление</button><button id="bstop">■ Остановить</button></div>
+   <div class="ph">Инструменты</div><button id="btools">🧰 Менеджер инструментов (SDK, JDK, .NET…)</button><button id="bnew">✨ Новый проект из шаблона</button></div>
+  <div id="side-git" class="pane hidden"><div class="row"><button id="gref">⟳</button><button id="ginit">init</button><button id="gpull">pull</button><button id="gpush">push</button></div>
+   <textarea id="gmsg" placeholder="Сообщение коммита"></textarea><div class="row"><button id="gcommit">✔ Коммит всех изменений</button><button id="gaimsg" title="ИИ напишет сообщение">✨</button></div><div id="gstat"></div><pre id="glog"></pre></div></div>
+ <div id="center"><div id="tabs"></div><div id="editor"></div><div id="welcome"><h1 id="wname">ИванКод</h1><div class="tip" id="wcopy">Студия, где код пишется вместе с ИИ · © Воронцов Иван Игоревич</div>
+  <div class="wgrid"><div class="card"><h3>🚀 Начать</h3><div class="ti" data-w="open">📂 Открыть папку…</div><div class="ti" data-w="newproj">✨ Новый проект из шаблона…</div><div class="ti" data-w="tools">🧰 Установить инструменты (Android, .NET…)</div></div>
+   <div class="card"><h3>🕘 Недавние проекты</h3><div id="recent"><div class="tip">Пока пусто</div></div></div>
+   <div class="card"><h3>🌱 Ваш прогресс</h3><div class="stat"><div><b id="pg-streak">0</b><span>дней подряд</span></div><div><b id="pg-saves">0</b><span>сохранений</span></div><div><b id="pg-ai">0</b><span>вопросов ИИ</span></div></div><div class="tip" id="pg-note" style="margin-top:8px"></div></div>
+   <div class="card"><h3>📚 Мини-уроки</h3><div id="lessons"></div></div>
+   <div class="card"><h3>💡 Совет дня</h3><div class="tip" id="tipday"></div><div class="row" style="padding:8px 0 0"><button id="nexttip">Ещё совет</button></div></div>
+   <div class="card"><h3>⌨ Клавиши</h3><div class="tip"><span class="kbd">Ctrl+S</span> сохранить · <span class="kbd">F5</span> запуск<br><span class="kbd">Ctrl+P</span> к файлу · <span class="kbd">Ctrl+Shift+F</span> поиск<br><span class="kbd">Ctrl+K</span> ИИ-правка · <span class="kbd">Ctrl+L</span> в чат<br><span class="kbd">Ctrl+Shift+Enter</span> режим фокуса</div></div></div></div>
+  <div id="panel"><div class="ptabs"><button data-p="term" class="on">Терминал</button><button data-p="out">Вывод запуска</button><button data-p="build">Сборка</button><span class="sp"></span><button id="tnew">новый терминал</button><button id="pclose">▾</button></div>
+   <div id="p-term" class="pp"></div><div id="p-out" class="pp hidden"></div><div id="p-build" class="pp hidden"></div></div></div>
+ <div id="ai"><div class="ptabs"><button data-a="chat" class="on">💬 ИИ-чат</button><button data-a="paste">📋 Вставка ответа</button><button data-a="web">🌐 Веб-чаты</button></div>
+  <div id="a-chat" class="ap"><div class="row"><select id="prov"></select><select id="acctSel" title="Вход в аккаунт ИИ: с входом — крупные шаги и целые файлы, без входа — мелкие шаги"><option value="auto">🔎 Вход: авто</option><option value="yes">✅ Есть вход</option><option value="no">👤 Нет входа</option></select><select id="mode"><option value="agent">🤖 Агент (сам правит и запускает)</option><option value="chat">Свободно</option><option value="explain">Объяснить</option><option value="fix">Исправить</option><option value="gen">Сгенерировать</option><option value="tests">Тесты</option><option value="refactor">Рефакторинг</option></select>
+   <label title="Прикладывать текущий файл/выделенное"><input type="checkbox" id="ctx" checked> контекст</label><button id="clr" title="Очистить">🗑</button></div>
+   <div id="msgs"></div><div id="attach"></div><textarea id="inp" placeholder="Спросите ИИ… (Enter — отправить, Shift+Enter — новая строка)"></textarea>
+   <div class="row"><button id="send">Отправить</button><button id="copyprompt" title="Для веб-чата без ключа">📋 Скопировать запрос с контекстом</button><button id="addfiles">📎 Файлы в контекст</button></div></div>
+  <div id="a-paste" class="ap hidden"><div class="hint">Вставьте сюда ответ из любого веб-чата (ChatGPT, GigaChat, Qwen, DeepSeek…). Блоки <code>```язык путь/к/файлу</code> применяются к указанному файлу, без пути — к текущему файлу/выделению.</div>
+   <textarea id="pasted" placeholder="Ctrl+V — ответ ИИ"></textarea><div class="row"><button id="pfromclip">📥 Из буфера</button><button id="pparse">Найти блоки кода</button></div><div id="blocks"></div></div>
+  <div id="a-web" class="ap hidden"><div class="row"><select id="wsite"></select><button id="wgrab" title="Забрать блоки кода из последнего ответа">⬇ Забрать код</button><button id="wsend" title="Вставить запрос с контекстом в поле чата">⬆ Отправить контекст</button><button id="wext">↗</button></div>
+   <div id="wvbox"></div></div></div>
+</div>
+<div id="status"><span id="st-file"></span><span class="sp"></span><span id="st-pos"></span><span id="st-lang"></span><span id="st-git"></span></div>
+<div id="modal" class="hidden"><div class="mbox"><div class="mh"><b id="mtitle"></b><span class="sp"></span><span id="mbtns"></span><button id="mclose">✕</button></div><div id="mbody"></div></div></div>
+<div id="aiview" class="hidden"><div class="av-head"><b>💬 Чат ИИ</b><span id="av-prov"></span><span class="av-sp"></span><button id="av-tab-web" class="hidden">🌐 Страница чата</button><button id="av-tab-tr">📜 Запросы и ответы</button><button id="av-min" title="Свернуть — ИИ продолжит работать">— Свернуть</button><button id="av-close" title="Закрыть — ИИ продолжит работать">✕</button></div>
+ <div class="av-note">Здесь видно, что студия отправляет ИИ и что он отвечает. Свернуть или закрыть это окно можно в любой момент — работа не прервётся.</div>
+ <div id="av-web" class="hidden"><div class="av-ph">Страница чата появится здесь, когда студия отправит запрос на сайт. Смотрите, но не нажимайте ничего в окне чата, пока ИИ работает.</div></div><div id="av-tr"><div class="av-ph">Пока запросов не было.</div></div></div>
+<button id="aipill" class="hidden" title="Развернуть чат ИИ">💬 Чат ИИ <span id="aipill-s"></span></button>
+<script src="vendor/xterm.js"></script><script src="vendor/addon-fit.js"></script><script src="vendor/diff.min.js"></script><script src="vendor/marked.js"></script>
+<script src="edits.js"></script><script src="vendor/vs/loader.js"></script><script src="renderer.js"></script><script src="progress.js"></script><script src="webapp.js"></script><script src="fast.js"></script><script src="editorx.js"></script></body></html>

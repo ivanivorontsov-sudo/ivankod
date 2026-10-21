@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+ <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b1f3d"/><stop offset="1" stop-color="#4a1f4f"/></linearGradient>
+ <linearGradient id="lf" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#2e7d32"/><stop offset="1" stop-color="#7cc576"/></linearGradient></defs>
+ <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+ <g transform="rotate(-38 128 128)">
+  <path d="M128 18 C146 60 150 100 148 140 C146 178 138 210 128 236 C118 210 110 178 108 140 C106 100 110 60 128 18 Z" fill="url(#lf)" stroke="#1b5e20" stroke-width="3"/>
+  <path d="M128 30 L128 236" stroke="#e8f5e9" stroke-width="3.2" stroke-linecap="round"/>
+  <g fill="none" stroke="#c8e6c9" stroke-width="1.8" stroke-linecap="round">
+   <path d="M128 60 Q136 66 140 62 Q143 72 141 84"/><path d="M128 60 Q120 66 116 62 Q113 72 115 84"/>
+   <path d="M128 92 Q138 98 143 92 Q146 106 143 118"/><path d="M128 92 Q118 98 113 92 Q110 106 113 118"/>
+   <path d="M128 126 Q139 132 144 126 Q146 140 143 152"/><path d="M128 126 Q117 132 112 126 Q110 140 113 152"/>
+   <path d="M128 160 Q138 166 142 160 Q143 174 140 186"/><path d="M128 160 Q118 166 114 160 Q113 174 116 186"/>
+   <path d="M128 192 Q135 198 138 194 Q137 206 134 214"/><path d="M128 192 Q121 198 118 194 Q119 206 122 214"/>
+  </g></g>
+ <text x="196" y="226" font-family="DejaVu Sans Mono,Consolas,monospace" font-weight="bold" font-size="54" fill="#f48fb1" text-anchor="middle">&lt;/&gt;</text>
+</svg>

@@ -1,0 +1,54 @@
+{
+  "name": "ivancode",
+  "version": "1.2.0",
+  "description": "ИванКод — студия разработки с ИИ",
+  "main": "app/main.js",
+  "author": "Воронцов Иван Игоревич",
+  "license": "SEE LICENSE IN LICENSE.txt",
+  "productName": "ИванКод",
+  "dependencies": {
+    "resedit": "^2.0.3"
+  },
+  "scripts": {
+    "start": "electron .",
+    "check": "node -e \"for(const f of require('fs').readdirSync('app').filter(f=>f.endsWith('.js')))require('child_process').execFileSync(process.execPath,['--check','app/'+f])\"",
+    "dist": "electron-builder --win nsis portable",
+    "dist:dir": "electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "ru.vorontsov.ivancode",
+    "productName": "ИванКод",
+    "executableName": "IvanCode",
+    "copyright": "© 2026 Воронцов Иван Игоревич",
+    "files": [
+      "app/**",
+      "package.json"
+    ],
+    "extraResources": [
+      "LICENSE.txt",
+      "THIRD-PARTY.txt"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "IvanCode-Setup-${version}.exe"
+    },
+    "portable": {
+      "artifactName": "IvanCode-Portable-${version}.exe"
+    }
+  }
+}
