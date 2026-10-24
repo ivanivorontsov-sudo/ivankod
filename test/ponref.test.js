@@ -1,0 +1,16 @@
+const test=require('node:test'), assert=require('node:assert'), fs=require('fs'), path=require('path'), os=require('os');
+const R=require('../app/ponref.js'), P=require('../app/ponapp.js'), NB=require('../app/nativebuild.js');
+const INPUT=['1\n5\n1\n4\n2\n3\n0\n','','тест\nабв\n2\n'];
+R.EXAMPLES.forEach(([t,c],i)=>test('пример справочника '+(i+1)+' («'+t+'») проверяется и запускается настоящим компилятором',async()=>{ const r=await NB.ponTry(c,{input:INPUT[i]||''}); assert.ok(r.ok,JSON.stringify(r).slice(0,600)) }));
+test('справочник: все служебные слова и все модули стд/ упомянуты',()=>{ for(const k of P.KW) assert.ok(R.REF.includes(k),'нет слова '+k); for(const m of ['консоль','математика','строки','списки','случай','время','файлы']) assert.ok(R.REF.includes('стд/'+m),m) });
+test('справочник короче прежнего полного описания минимум в 2 раза',()=>{ const old=require('../app/ponsyntax.js'); assert.ok(R.REF.length*2<old.length,R.REF.length+' / '+old.length) });
+test('«НАДО»-половина каждой частой ошибки компилируется',async()=>{ const ok=['пусть x = 5\nx = 6','пусть с = [1]\nс.добавь(2)\nнапиши длина(с), с.длина','пусть x = 1\nесли x == 1 то\n    напиши x\nиначе если x > 1 то\n    напиши 2\nиначе\n    напиши 3\nконец','для i от 1 до 5\n    напиши i\nконец\nдля каждого i из от(1, 5)\n    напиши i\nконец','пусть г = истина\nнапиши "{если г то «да» иначе «нет»}"','пусть a = 1\nпусть b = 2\nпусть c = 3\nнапиши a < b и b < c'];
+ for(const c of ok){ const r=await NB.ponTry(c,{}); assert.ok(r.ok,c+'\n'+JSON.stringify(r).slice(0,300)) } });
+async function check(code){ const d=fs.mkdtempSync(path.join(os.tmpdir(),'pr-')); const f=path.join(d,'п.pon'); fs.writeFileSync(f,code); return NB.ponCheck(f) }
+test('исправления по сообщению компилятора: пусть, повторное пусть, двоеточие — потом настоящий компилятор доволен',async()=>{ const cases=['x = 5\nнапиши x','пусть a = 1\nпусть a = 2\nнапиши a','пусть а = истина\nесли а то\n    напиши 1\nиначе:\n    напиши 2\nконец'];
+ for(let code of cases){ for(let k=0;k<4;k++){ const c=await check(code); if(c.ok) break; const f=P.errorFix(code,c.errors); assert.ok(f.fixes.length,'не исправлено: '+c.out); code=f.code } const c=await check(code); assert.ok(c.ok,code+'\n'+c.out) } });
+test('частые ошибки Python до компиляции переводятся на «Понятный» и не трогают строки',async()=>{ const src='пусть а = True\nпусть с = []\nс.append("None: True")\nесли а == None:\n    print(len(с))\nиначе:\n    напиши 0\nконец\nдля i в от(1, 2)\n    напиши i\nконец'; const r=P.autofix(src);
+ assert.match(r.code,/"None: True"/); const c=await check(r.code); assert.ok(c.ok,r.code+'\n'+c.out) });
+test('запрос на исправление: только нужные строки, подсказки, повтор и прошлый дифф',()=>{ const code='пусть а = 1\nнапиши б\nнапиши а'; const t=P.fixPrompt('Т',code,['строка 2, столбец 8: не знаю, что такое «len»'],{attempt:2,max:5,repeated:true,prevDiff:'- 2| x\n+ 2| y'});
+ assert.match(t,/>>\s+2\| напиши б/); assert.match(t,/попытка исправления 2 из 5/); assert.match(t,/длина/); assert.match(t,/ЭТА ЖЕ ОШИБКА/); assert.match(t,/\+ 2\| y/); assert.ok(!t.includes('СТАНДАРТНАЯ БИБЛИОТЕКА')) });
+test('после повторов к исправлению прикладывается весь справочник',()=>{ const t=P.fixPrompt('Т','напиши 1',['строка 1: x'],{attempt:3,repeated:true,withRef:true}); assert.match(t,/СТАНДАРТНАЯ БИБЛИОТЕКА/) });

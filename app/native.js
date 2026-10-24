@@ -2,7 +2,7 @@
 // Правила: код пишет только ИИ; одна попытка исправления; сломанную программу не собираем; проблемы компьютера ИИ не отдаём.
 const NATIVE={stats:null};
 function nativeWay(){ const w=S.cfg.simpleWay||'fast'; return w==='kotlin'||w==='pon'||w==='cs'?w:null }
-async function nAsk(sys,user,why){ const t0=Date.now(); const a=await askAI([{role:'system',content:sys},{role:'user',content:user}],{round:1}); NATIVE.stats.ai+=Date.now()-t0; NATIVE.stats.aiCalls++; alog('  ⚡ '+why+': ответ ИИ '+(a?a.length:0)+' симв. за '+fmtT(Date.now()-t0)); try{ await api.write(S.root+sep+'.ivancode'+sep+'runs'+sep+NATIVE.run+sep+String(NATIVE.stats.aiCalls).padStart(2,'0')+'-reply.txt',String(a)) }catch{} return a }
+async function nAsk(sys,user,why){ const t0=Date.now(); const a=await askAI([{role:'system',content:sys},{role:'user',content:user}],{round:1,chat:SM.root||'native'}); NATIVE.stats.ai+=Date.now()-t0; NATIVE.stats.aiCalls++; alog('  ⚡ '+why+': ответ ИИ '+(a?a.length:0)+' симв. за '+fmtT(Date.now()-t0)); try{ await api.write(S.root+sep+'.ivancode'+sep+'runs'+sep+NATIVE.run+sep+String(NATIVE.stats.aiCalls).padStart(2,'0')+'-reply.txt',String(a)) }catch{} return a }
 // один ответ: не по формату → одно напоминание формата (это не исправление кода)
 async function nGet(L,sys,prompt,why){ let a=await nAsk(sys,prompt,why); if(a==null) return null; let p=L.parseAnswer(a);
  if(!p.ok){ PG.log('ИИ ответил не по формату — прошу ещё раз, коротко','warn'); a=await nAsk(sys,prompt+'\n\nВНИМАНИЕ: предыдущий ответ был не по формату. Ответь ТОЛЬКО в указанном формате, без пояснений.','повтор формата'); if(a==null) return null; p=L.parseAnswer(a) }
@@ -25,9 +25,8 @@ async function nativeRun(desc,isChange,mode){ if(SM.busy) return; const way=isCh
   smStage('write',isChange?'ИИ вносит изменения…':'ИИ пишет программу целиком…');
   let p=await nGet(L,L.SYS,isChange?L.changePrompt(SM.name,cur,desc):L.firstPrompt(SM.name,desc),isChange?'изменение':'программа целиком'); if(!p){ PG.halted(); return } if(p.failed){ smStage('write','ИИ не прислал программу',true); sm$('s-title').textContent='ИИ не прислал программу ⚠'; smMsg('ИИ дважды ответил не в нужном формате, поэтому я ничего не собирал. Попробуйте другой ИИ в списке или нажмите «🔄 Повторить».'); PG.fail('ответ не по формату'); return }
   let code=p.code; let chk=await nCheck(way,file,code); if(chk.code) code=chk.code;
-  if(chk.env){ return nEnvFail(chk.env,chk.out) }
-  if(!chk.ok&&!AIW.stop){ NATIVE.stats.fixes++; PG.log('Компилятор нашёл: '+chk.msgs.slice(0,3).join('; '),'warn'); smStage('check','Нашлась ошибка — ИИ исправляет (одна попытка)…');
-   const q=await nGet(L,L.SYS,L.fixPrompt(SM.name,code,chk.msgs),'исправление'); if(q&&!q.failed){ const c2=await nCheck(way,file,q.code); if(c2.env) return nEnvFail(c2.env,c2.out); if(c2.ok||c2.msgs.length<=chk.msgs.length){ code=c2.code||q.code; chk=c2 } else { await nCheck(way,file,code) } } }
+  if(chk.env){ const h=await nHeal(way,file,code,chk); if(h.env) return nEnvFail(h.env,h.out); chk=h; if(chk.code) code=chk.code }
+  if(!chk.ok&&!AIW.stop){ const r=await nFixLoop(L,way,file,code,chk); if(r.env) return nEnvFail(r.env,r.out); code=r.code; chk=r.chk }
   if(AIW.stop){ PG.halted(); return }
   if(!chk.ok){ if(isChange&&cur){ await nCheck(way,file,cur); PG.log('Изменение не прошло проверку — вернул прошлую рабочую версию','warn') } result={ok:false}; return nBroken(chk,isChange&&!!cur) }
   SM.files=[]; if(way==='kotlin'||way==='cs'){ SM.files.push(chk.file) } else { smStage('build','Собираю EXE компилятором «Понятный»…'); const t0=Date.now(); const exe=S.root+sep+'Готовая программа'+sep+SM.name.replace(/[\\/:*?"<>|]+/g,'_')+'.exe'; const b=await api.ponBuild(file,exe); NATIVE.stats.build+=Date.now()-t0;
@@ -37,7 +36,7 @@ async function nativeRun(desc,isChange,mode){ if(SM.busy) return; const way=isCh
  finally{ SM.busy=false; PG.done(); const s=NATIVE.stats; s.total=Date.now()-s.t0; s.ok=!!(result&&result.ok); alog('  ⏱ итог: всего '+fmtT(s.total)+', ИИ '+fmtT(s.ai)+' ('+s.aiCalls+' запр.), проверка '+fmtT(s.check)+', сборка '+fmtT(s.build)+', исправлений: '+s.fixes); window.__nativeStats=s } }
 // проверка: Kotlin — настоящая компиляция Gradle (она же сборка APK); Понятный — ponyatny проверить + пробный запуск
 async function nCheck(way,file,code){ const t0=Date.now(); let r;
- if(way==='kotlin'){ smStage('check','Компилирую Kotlin и собираю APK…'); const b=await api.ktBuild(S.root,SM.name,code); NATIVE.stats.check+=Date.now()-t0; NATIVE.stats.build+=Date.now()-t0;
+ if(way==='kotlin'){ smStage('check','Компилирую Kotlin и собираю APK…'); const b=await api.ktBuild(S.root,SM.name,code); NATIVE.stats.check+=Date.now()-t0; NATIVE.stats.build+=Date.now()-t0; if(b.heal&&b.heal.length) PG.log('Студия сама поправила окружение: '+b.heal.join('; '),'good');
   if(b.env) return {ok:false,env:b.env,out:b.out,msgs:[]}; const msgs=KtApp.fmtErrors(b.errors.length?b.errors:[]); if(!b.ok&&!msgs.length) msgs.push('сборка не удалась: '+b.out.split('\n').filter(l=>/error|ошибк|FAILED/i.test(l)).slice(0,3).join(' | '));
   if(b.ok) PG.log('Kotlin скомпилирован, APK собран за '+fmtT(b.ms),'good'); return {ok:b.ok,msgs,file:b.file,errors:b.errors} }
  if(way==='cs'){ smStage('check','Компилирую C# и собираю EXE…'); const b=await api.csBuild(S.root,SM.name,code); NATIVE.stats.check+=Date.now()-t0; NATIVE.stats.build+=Date.now()-t0;
@@ -46,7 +45,7 @@ async function nCheck(way,file,code){ const t0=Date.now(); let r;
  { const af=PonApp.autofix(code); if(af.fixes.length){ code=af.code; PG.log('Студия поправила: '+af.fixes.slice(0,4).join('; '),'good') } }
  await api.write(file,code); smStage('check','Проверяю программу компилятором «Понятный»…'); const c=await api.ponCheck(file); let msgs=PonApp.fmtErrors(c.errors);
  if(c.warns.length) PG.log('Компилятор сам поправил: '+c.warns.map(w=>'строка '+w.line+': '+w.msg).slice(0,3).join('; '),'good');
- if(c.ok){ const s=await api.ponSmoke(file); if(!s.ok&&!s.hung){ msgs=PonApp.fmtErrors(s.errors.length?s.errors:[{kind:'error',line:0,msg:'программа упала при пробном запуске: '+s.out.slice(-200)}]).map(m=>'при запуске: '+m) } r={ok:c.ok&&(s.ok||s.hung),msgs,code} } else r={ok:false,msgs,code};
+ if(c.ok){ const s=await api.ponSmoke(file); if(!s.ok&&!s.hung){ msgs=PonApp.fmtErrors(s.errors.length?s.errors:[{kind:'error',line:0,msg:'программа упала при пробном запуске: '+s.out.slice(-200)}]).map(m=>'при запуске: '+m) } r={ok:c.ok&&(s.ok||s.hung),msgs,code,errs:s.ok?[]:(s.errors||[])} } else r={ok:false,msgs,code,errs:c.errors||[]};
  NATIVE.stats.check+=Date.now()-t0; if(r.ok) PG.log('Проверка пройдена: ошибок нет','good'); return r }
 function nEnvFail(why,out){ smStage('check','Проблема компьютера',true); sm$('s-title').textContent='Нужно доустановить инструменты ⚠'; smMsg('Сборка остановилась не из-за программы, а из-за компьютера: '+why+'.\nИИ эту ошибку не отправлял — он её не исправит.\n\nОткройте «🧰 Проверка инструментов» и установите недостающее, затем нажмите «🔄 Повторить».\n\nПодробности:\n'+String(out||'').slice(-600)); PG.fail(why) }
 function nBroken(chk,reverted){ smStage('check','Проверка не пройдена',true); sm$('s-title').textContent='Программа не прошла проверку ⚠'; SM.files=[];
@@ -72,3 +71,23 @@ function nTranslateUi(){ let b=sm$('s-tr'); if(SM.way!=='pon'){ if(b) b.classLis
 // Monaco: язык «Понятный» (.pon) с подсветкой
 (function reg(){ if(!window.monaco){ return setTimeout(reg,500) } try{ monaco.languages.register({id:'ponyatny',extensions:['.pon'],aliases:['Понятный']}); monaco.languages.setMonarchTokensProvider('ponyatny',PonApp.MONARCH); monaco.languages.setLanguageConfiguration('ponyatny',{comments:{lineComment:'#'},brackets:[['(',')'],['[',']'],['{','}']],autoClosingPairs:[{open:'(',close:')'},{open:'[',close:']'},{open:'"',close:'"'},{open:'«',close:'»'}]}) }catch(e){ console.error(e) } })();
 window.__native={nativeRun,nCheck,NATIVE};
+const FIX_MAX=5;
+function nSig(msgs){ return (msgs||[]).map(m=>String(m).replace(/строка \d+(, столбец \d+)?: /,'')).sort().join('|') }
+async function nHeal(way,file,code,chk){ for(let k=1;k<=2&&chk.env&&!AIW.stop;k++){ PG.log('Проблема компьютера: '+chk.env+' — чиню сам (ИИ не трачу), шаг '+k,'warn'); smStage('check','Чиню инструменты сборки…');
+  try{ const L=await api.depsCheck(way,SM.kind); for(const d of L.filter(x=>!x.found&&!x.optional)){ PG.log('Устанавливаю '+d.name+'…'); const r=await api.toolsInstall(d.id); PG.log(r&&r.ok?'Установлено: '+d.name:'Не удалось установить '+d.name+': '+((r&&r.err)||''),r&&r.ok?'good':'warn') } }catch(e){ PG.log('Проверка инструментов: '+e.message,'warn') }
+  try{ if(api.diagRun&&api.diagFix){ const d=await api.diagRun({offline:true}); for(const it of ((d&&d.items)||[]).filter(x=>x.fix&&(x.level==='bad'||x.level==='warn')&&(!x.ways||x.ways.includes(way)))){ PG.log('Исправляю: '+it.title); await api.diagFix(it.fix.id,{offline:true}) } } }catch{}
+  chk=await nCheck(way,file,code) }
+ return chk }
+async function nFixLoop(L,way,file,code,chk){ let best={code,chk,n:chk.msgs.length}; let prev=null, prevSig='', seen={};
+ for(let att=1;att<=FIX_MAX&&!chk.ok&&!AIW.stop;att++){
+  if(way==='pon'){ const ef=PonApp.errorFix(code,(chk.errs||[])); if(ef.fixes.length){ PG.log('Студия сама исправила: '+ef.fixes.slice(0,3).join('; '),'good'); const c0=await nCheck(way,file,ef.code); if(c0.env){ chk=await nHeal(way,file,ef.code,c0); if(chk.env) return {env:chk.env,out:chk.out} } else chk=c0; code=chk.code||ef.code; if(chk.msgs.length<best.n||chk.ok) best={code,chk,n:chk.msgs.length}; if(chk.ok) break } }
+  NATIVE.stats.fixes++; const sig=nSig(chk.msgs); const repeated=!!seen[sig]; seen[sig]=(seen[sig]||0)+1;
+  PG.log('Компилятор нашёл: '+chk.msgs.slice(0,3).join('; '),'warn'); smStage('check','Нашлась ошибка — ИИ исправляет (попытка '+att+' из '+FIX_MAX+')…');
+  const pr=L===PonApp?L.fixPrompt(SM.name,code,chk.msgs.slice(0,8),{attempt:att,max:FIX_MAX,repeated,prevDiff:prev&&repeated?prev:'',withRef:att>=3&&repeated}):L.fixPrompt(SM.name,code,chk.msgs.slice(0,8))+(repeated?'\n\nЭТА ЖЕ ОШИБКА БЫЛА И В ПРОШЛОЙ ПОПЫТКЕ — перепиши этот кусок иначе.':'');
+  const q=await nGet(L,L.SYS,pr,'исправление '+att); if(!q) break; if(q.failed) continue;
+  const c2=await nCheck(way,file,q.code); let r2=c2; if(c2.env){ r2=await nHeal(way,file,q.code,c2); if(r2.env) return {env:r2.env,out:r2.out} }
+  const newCode=r2.code||q.code; prev=PonApp.lineDiff(code,newCode); prevSig=sig;
+  if(r2.ok||r2.msgs.length<=best.n){ best={code:newCode,chk:r2,n:r2.msgs.length} }
+  code=r2.ok||r2.msgs.length<=chk.msgs.length+1?newCode:best.code; chk=r2.ok||code===newCode?r2:best.chk }
+ if(!chk.ok&&best.chk!==chk){ code=best.code; chk=await nCheck(way,file,code) }
+ return {code,chk} }

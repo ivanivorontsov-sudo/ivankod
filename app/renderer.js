@@ -216,30 +216,31 @@ $('#pfromclip').onclick=async()=>{ $('#pasted').value=await api.clipRead(); draw
 // ===== Веб-чаты: автоматизация =====
 let wv=null, wvSite=null, autoJs=null; const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function site(id){ return S.sites.find(s=>s.id===id) }
-async function ensureWV(id){ const s=site(id); if(!s) throw new Error('нет сайта '+id); wv=true;
- if(wvSite!==id){ wvSite=id; $('#wsite').value=id; await api.webOpen(s.url); await waitReady(); S.webFresh=true } return s }
-async function waitReady(){ for(let i=0;i<40;i++){ try{ const r=await api.webExec("document.readyState==='complete'&&!![...document.querySelectorAll('textarea,[contenteditable=true],div[role=textbox]')].find(e=>e.getClientRects().length)"); if(r) break }catch{} await sleep(500) } await sleep(2500) }
+async function ensureWV(id){ const s=site(id); if(!s) throw new Error('нет сайта '+id); wv=true; if(wvSite!==id){ wvSite=id; $('#wsite').value=id; await WF.prepare(s,WF.W.key||webKey()) } return s }
+async function waitReady(){ return WF.waitReady(15000) }
 function placeWeb(){ const avw=typeof AV!=='undefined'&&AV.webShown(); const simple=!document.getElementById('simple').classList.contains('hidden'); const box=avw?$('#av-web'):$('#wvbox'); const vis=$('#modal').classList.contains('hidden')&&(avw||(!simple&&!$('#a-web').classList.contains('hidden'))); const r=box.getBoundingClientRect(); api.webPlace({x:r.x,y:r.y,width:r.width,height:r.height},vis&&r.width>20&&r.height>20) }
 new ResizeObserver(()=>placeWeb()).observe(document.body); setInterval(placeWeb,1500);
 async function wjs(expr){ autoJs=autoJs||await api.webautoJs(); const s=site(wvSite)||{};
  return api.webExec('window.__ppSel='+JSON.stringify({input:s.input||'',send:s.send||'',answer:s.answer||'',busy:s.busy||''})+';\n'+autoJs+';\n'+expr) }
-async function newWebChat(s){ if(S.webFresh){ S.webFresh=false; return } try{ await api.webOpen(s.url); await waitReady() }catch{} }
-async function askWeb(id,messages,opt={}){ const s=await ensureWV(id).catch(e=>{ toast(e.message); return null }); if(!s) return null;
- const sys=messages.find(m=>m.role==='system'); const last=messages.filter(m=>m.role==='user').pop(); const first=!opt.round||opt.round===1; if(first&&opt.round===1) await newWebChat(s); const prompt=(sys&&first?sys.content+'\n\n':'')+last.content;
+function webKey(opt){ return String((opt&&opt.chat)||S.root||'default')+(opt&&opt.role==='ctrl'?'#ctrl':'') }
+const WF=WebFlow.create({open:u=>api.webOpen(u),exec:e=>wjs(e),sleep,url:()=>api.webUrl(),log:t=>alog('  🌐 '+t)});
+async function newWebChat(s){ s=s||site($('#wsite').value); if(!s) return; wvSite=s.id; wv=true; await WF.newChat(s,webKey()); toast('Новый чат: '+s.name) }
+async function askWeb(id,messages,opt={}){ const s=site(id); if(!s){ toast('нет сайта '+id); return null } wv=true; wvSite=id; $('#wsite').value=id;
+ const sys=messages.find(m=>m.role==='system'); const last=messages.filter(m=>m.role==='user').pop();
  const d=opt.silent?null:addMsg('🌐 '+s.name,'_Отправляю запрос во встроенный браузер…_'); const log=t=>{ if(d) setMsg(d,'_'+t+'_') };
- if(window.__dumpPrompt) api.write('/tmp/lastprompt.txt',prompt); await wjs('window.__pp.mark('+JSON.stringify(prompt)+')'); const r=await wjs('window.__pp.send('+JSON.stringify(prompt)+')');
- if(r==='noinput'){ AIW.lastWebErr='NOINPUT: нет поля ввода (нужен вход на сайте)'; if(!SM.busy) aiTab('web'); log('Не найдено поле ввода. Войдите в аккаунт на вкладке «Веб-чаты» и повторите (сессия сохранится).'); return null }
- await sleep(2000); if(await wjs('window.__pp.pending()')) { await wjs('window.__pp.clickLast()'); await sleep(1500) }
- const WT=aiTimeouts({id:'web:'+id}); let lastCh=Date.now(); const tid='w'+Math.random().toString(36).slice(2); TR.start(tid,(opt.role==='ctrl'?'🛡 Контролёр · 🌐 ':'🧑‍💻 ИИ-программист · 🌐 ')+s.name,messages); const t0w=Date.now(); const fin=(v,err)=>{ TR.end(tid,err); return v };
- let lastT='',stable=0, resent=false; for(let i=0;i<600;i++){ if(AIW.stop){ AIW.lastWebErr='ABORT'; return fin(null,'ABORT') } PG.live(lastT?`ИИ печатает: ${num(lastT.length)} символов (${fmtT(Date.now()-t0w)})`:`Жду ответ ИИ на сайте ${s.name}… (${fmtT(Date.now()-t0w)})`); if(i===12&&!lastT&&!resent){ resent=true; try{ const pend=await wjs('window.__pp.pending()'); if(pend){ alog('  запрос остался в поле ввода — отправляю ещё раз'); await wjs('window.__pp.send('+JSON.stringify(prompt)+')') } }catch{} } await sleep(1000); let j; try{ j=JSON.parse(await wjs('window.__pp.poll()')) }catch{ continue }
-  if(j.text&&j.text===lastT) stable++; else stable=0; if((j.text||'')!==lastT){ lastCh=Date.now(); TR.set(tid,j.text||'') } lastT=j.text;
-  if(!j.text&&Date.now()-t0w>WT.first*1000){ alog(`  ⏱ сайт ${s.name} молчит ${Math.round((Date.now()-t0w)/1000)} с`); AIW.lastWebErr='TIMEOUT: сайт молчит'; return fin(null,'TIMEOUT') }
-  if(j.text&&Date.now()-lastCh>WT.idle*1000){ alog(`  ⏱ ответ на сайте ${s.name} не меняется ${WT.idle} с`); if(j.text.length>200&&!j.busy) return fin(j.text); AIW.lastWebErr='TIMEOUT: ответ остановился'; return fin(j.text.length>200?j.text:null,j.text.length>200?'':'TIMEOUT') } if(d&&j.text) setMsg(d,j.text+(j.busy?' ▌':'')); else if(i%5==0) log(`Жду ответ… ${i} с`);
-  if(j.limit){ TR.end(tid,'лимит сайта'); alog('  ⛔ сайт сообщил о лимите (гостевой режим/частота запросов)'); log('Сайт сообщил о лимите. Войдите в аккаунт на вкладке «Веб-чаты» или подождите.'); const e=new Error('WEB_LIMIT'); e.limit=true; throw e }
-  if(i===75&&!lastT&&!(await wjs('window.__pp.sent()').catch(()=>false))){ alog('  сайт не отвечает 75 с — перезагружаю чат и отправляю заново'); await api.webOpen(s.url); await waitReady(); await wjs('window.__pp.mark('+JSON.stringify(prompt)+')'); await wjs('window.__pp.send('+JSON.stringify(prompt)+')') }
-  if(i%10===0) alog(`  web: ${i}s len=${(j.text||'').length} busy=${j.busy} stable=${stable} m=${j.method}`); if(j.text&&((!j.busy&&stable>=5)||(stable>=90&&j.text.length>200))){ if(webErrReply(j.text)){ alog(`  ⚠ сайт ${s.name} ответил ошибкой: «${j.text.trim().slice(0,120)}»`); AIW.lastWebErr='WEB_ERR: '+j.text.trim().slice(0,150); return fin(null,AIW.lastWebErr) } return fin(j.text) } }
- alog('  askWeb таймаут'); log('Таймаут. Нажмите «⬇ Забрать код» на вкладке «Веб-чаты».'); AIW.lastWebErr='TIMEOUT'; return fin(lastT||null,lastT?'':'TIMEOUT') }
+ const WT=aiTimeouts({id:'web:'+id}); const tid='w'+Math.random().toString(36).slice(2); TR.start(tid,(opt.role==='ctrl'?'🛡 Контролёр · 🌐 ':'🧑‍💻 ИИ-программист · 🌐 ')+s.name,messages); const t0w=Date.now(); const fin=(v,err)=>{ TR.end(tid,err); return v };
+ const tk=setInterval(()=>PG.live(`Жду ответ ИИ на сайте ${s.name}… (${fmtT(Date.now()-t0w)})`),1000);
+ let r; try{ r=await WF.ask(s,{key:webKey(opt),sys:sys&&sys.content,user:last.content,timeouts:WT,stop:()=>AIW.stop,onText:(t,busy)=>{ TR.set(tid,t); if(d) setMsg(d,t+(busy?' ▌':'')) }}) }
+ catch(e){ if(e&&e.limit){ TR.end(tid,'лимит сайта'); alog('  ⛔ сайт сообщил о лимите (гостевой режим/частота запросов)'); log('Сайт сообщил о лимите. Войдите в аккаунт на вкладке «Веб-чаты» или подождите.') } throw e }
+ finally{ clearInterval(tk) }
+ if(window.__dumpPrompt) api.write('/tmp/lastprompt.txt',(sys?sys.content+'\n\n':'')+last.content);
+ alog(`  🌐 ${s.name}: готов ${r.tm.ready} мс, отправлен ${r.tm.sent} мс, первые символы ${r.tm.first==null?'—':r.tm.first+' мс'}, ответ ${r.tm.done==null?'—':fmtT(r.tm.done)}${r.sysSent?'':' (тот же чат, инструкция уже в нём)'}`);
+ if(r.err){ AIW.lastWebErr=r.err; if(/^NOINPUT/.test(r.err)){ if(!SM.busy) aiTab('web'); log('Не найдено поле ввода. Войдите в аккаунт на вкладке «Веб-чаты» и повторите (сессия сохранится).') } else if(r.err==='ABORT'){} else log('Таймаут. Нажмите «⬇ Забрать код» на вкладке «Веб-чаты».'); return fin(r.text||null,r.err) }
+ if(webErrReply(r.text)){ alog(`  ⚠ сайт ${s.name} ответил ошибкой: «${r.text.trim().slice(0,120)}»`); AIW.lastWebErr='WEB_ERR: '+r.text.trim().slice(0,150); return fin(null,AIW.lastWebErr) }
+ return fin(r.text) }
 $('#wsite').onchange=e=>ensureWV(e.target.value);
+if($('#wnew')) $('#wnew').onclick=()=>newWebChat(site($('#wsite').value));
+$('#prov').addEventListener('change',e=>{ const v=e.target.value; if(v.startsWith('web:')&&site(v.slice(4))) ensureWV(v.slice(4)).catch(()=>{}) });
 $('#wgrab').onclick=async()=>{ if(!wv) return; const j=JSON.parse(await wjs('window.__pp.grab()')); $('#pasted').value=j.text; aiTab('paste'); drawBlocks(j.text) };
 $('#wsend').onclick=async()=>{ if(!wv) await ensureWV($('#wsite').value); const p=SYS+'\n\n'+await buildPrompt($('#inp').value.trim(),$('#mode').value); await wjs('window.__pp.mark('+JSON.stringify(p)+')'); await wjs('window.__pp.send('+JSON.stringify(p)+')') };
 $('#wext').onclick=()=>{ const s=site($('#wsite').value); if(s) api.openExt(s.url) };
@@ -516,14 +517,18 @@ const _alog=alog; alog=function(t){ _alog(t); if(!SM.busy) return; let m;
 async function smEnsureTools(kind){ if(!/Windows/.test(navigator.userAgent)) return true; const need=kind==='phone'?['jdk','android','gradle']:['python','nsis'];
  const L=await api.toolsList(); for(const id of need){ const t=L.find(x=>x.id===id); if(t&&!t.installed){ smStage('build','Скачиваю нужный инструмент: '+t.name+' (один раз)…'); const r=await api.toolsInstall(id); if(!r.ok){ notify('Не установлено: '+t.name+'. Причина: '+(r.err||'неизвестно'),true); smMsg('Не получилось установить '+t.name+'.\nПричина: '+(r.err||'неизвестно')+'\n\nОткройте «🧰 Проверка инструментов» (режим для опытных) и нажмите «Скопировать отчёт».'); return false } } } return true }
 // надёжная сборка: несколько попыток, ошибки сборки — ИИ на исправление, понятный итог
+function buildErrLines(r){ const e=(r.errors||[]).slice(0,20).map(x=>`${rel(x.file)}:${x.line} ${x.msg}`); const L=String(r.out||'').split('\n'); const hits=[]; L.forEach((l,i)=>{ if(/error|ошибк|exception|FAILED|not found|не найден|cannot|unresolved/i.test(l)) hits.push(L.slice(Math.max(0,i-1),i+3).join('\n')) }); return (e.length?e.join('\n')+'\n\n':'')+[...new Set(hits)].slice(0,25).join('\n…\n').slice(0,6000) }
 async function smBuild(){ SM.stage='build'; smStage('build','Готовлю инструменты…'); if(!(await smEnsureTools(SM.kind))) return false; await refreshBuild();
- const targets=SM.kind==='phone'?[['debug','Собираю приложение для телефона (APK)…']]:[['exe','Собираю программу (EXE)…'],['installer','Собираю установщик…']];
- for(const [t,label] of targets){ let ok=false, lastR=null; for(let a=1;a<=2&&!ok&&!HALT();a++){ smStage('build',label+(a>1?` (попытка ${a})`:''));
+ const targets=SM.kind==='phone'?[['debug','Собираю приложение для телефона (APK)…']]:[['exe','Собираю программу (EXE)…'],['installer','Собираю установщик…']]; const MAXA=5;
+ for(const [t,label] of targets){ let ok=false, lastR=null, heal=0, seen={}; for(let a=1;a<=MAXA&&!ok&&!HALT();a++){ smStage('build',label+(a>1?` (попытка ${a} из ${MAXA})`:''));
    const r=await api.build(S.root,PK.kind,t,{}); lastR=r; if(r.code===0){ ok=true; break }
-   PG.log('Ошибка сборки: '+(((r.errors||[])[0]||{}).msg||String(r.out||'').trim().split('\n').filter(l=>/error|ошибк|not found|FAIL|не найден/i.test(l)).slice(-1)[0]||String(r.out||'').trim().split('\n').slice(-1)[0]||'').slice(0,200),'warn'); { const why=WebApp.envProblem(r.out); if(why){ envNotice(why,r.out); smStage('build','Не хватает инструмента',true); sm$('s-title').textContent='Не хватает инструмента ⚠'; return false } } smStage('build','Сборка не удалась — ИИ исправляет ошибку…'); const errs=(r.errors||[]).map(e=>`${rel(e.file)}:${e.line} ${e.msg}`).join('\n');
-   await agent(`Сборка (${r.cmd}) завершилась с ошибкой. Исправь проект так, чтобы она прошла (не меняй требования программы).\n\nОшибки:\n\`\`\`\n${errs}\n${String(r.out).slice(-6000)}\n\`\`\``,{rounds:1,ui:false,verify:async()=>{ const v=await api.build(S.root,PK.kind,t,{}); return {ok:v.code===0,out:String(v.out).slice(-6000)} },verifyDesc:'повторная сборка'}) ;
-   const v=await api.build(S.root,PK.kind,t,{}); ok=v.code===0 }
-  if(!ok){ smStage('build','Не получилось собрать',true); sm$('s-title').textContent='Не получилось собрать ⚠'; smMsg('Сборка не прошла и после одного автоматического исправления. Готовый файл НЕ создан (сломанную программу не собираю).\nОшибка: '+((((lastR||{}).errors||[])[0]||{}).msg||'см. журнал')+'\n\nЛучше выбрать способ «⚡ Быстро» — он собирает за секунды без инструментов.'); return false } }
+   PG.log('Ошибка сборки: '+(((r.errors||[])[0]||{}).msg||String(r.out||'').trim().split('\n').filter(l=>/error|ошибк|not found|FAIL|не найден/i.test(l)).slice(-1)[0]||String(r.out||'').trim().split('\n').slice(-1)[0]||'').slice(0,200),'warn');
+   { const why=WebApp.envProblem(r.out); if(why){ if(heal<2){ heal++; a--; PG.log('Это проблема компьютера ('+why+'), а не программы — чиню инструменты сам, попытка не считается','warn'); smStage('build','Чиню инструменты сборки…'); const okT=await smEnsureTools(SM.kind); await refreshBuild(); if(okT) continue } envNotice(why,r.out); smStage('build','Не хватает инструмента',true); sm$('s-title').textContent='Не хватает инструмента ⚠'; return false } }
+   const errs=buildErrLines(r); const sig=errs.replace(/:\d+/g,'').slice(0,400); const rep=!!seen[sig]; seen[sig]=1;
+   smStage('build',`Сборка не удалась — ИИ исправляет ошибку (попытка ${a} из ${MAXA})…`);
+   await agent(`Сборка (${r.cmd}) завершилась с ошибкой. Исправь проект так, чтобы она прошла (не меняй требования программы).${rep?'\nЭТА ЖЕ ОШИБКА УЖЕ БЫЛА В ПРОШЛОЙ ПОПЫТКЕ — прошлое исправление не помогло, сделай по-другому.':''}\n\nОшибки (только нужные строки вывода):\n\`\`\`\n${errs}\n\`\`\``,{rounds:1,ui:false,verify:async()=>{ const v=await api.build(S.root,PK.kind,t,{}); return {ok:v.code===0,out:buildErrLines(v)} },verifyDesc:'повторная сборка'});
+   const v=await api.build(S.root,PK.kind,t,{}); lastR=v; ok=v.code===0 }
+  if(!ok){ smStage('build','Не получилось собрать',true); sm$('s-title').textContent='Не получилось собрать ⚠'; smMsg('Сборка не прошла и после '+MAXA+' попыток автоматического исправления. Готовый файл НЕ создан (сломанную программу не собираю).\nОшибка: '+((((lastR||{}).errors||[])[0]||{}).msg||'см. журнал')+'\n\nНажмите «🔄 Повторить» или выберите способ «⚡ Быстро».'); return false } }
  return true }
 async function smFinish(){ const c=await api.simpleCollect(S.root); SM.files=c.files; SM.out=c.dir; smStage('done','Программа готова!'); sm$('s-title').textContent='Готово! 🎉';
  const exe=c.files.find(f=>/Setup\.exe$/i.test(f)), apk=c.files.find(f=>/\.apk$/i.test(f));

@@ -17,10 +17,24 @@ function ktWrite(root,name,body,o={}){ const icoDir=path.join(root,'.ivancode','
  if(o.sdk) fs.writeFileSync(path.join(root,'local.properties'),'sdk.dir='+o.sdk.replace(/\\/g,'\\\\').replace(/:/g,'\\:')+'\n') }
 const APK_REL=['app','build','outputs','apk','debug','app-debug.apk'];
 /** компиляция + сборка APK. Возвращает {ok, errors[{line,ru}], env (проблема окружения), apk, ms, out} */
-async function ktBuild(root,o={}){ const env=o.env||process.env; const apk=path.join(root,...APK_REL); try{ fs.rmSync(apk,{force:true}) }catch{} // старый APK никогда не выдаём за новый
- const g=gradleExe(env); const r=await run(g,['assembleDebug','--console=plain','-q','--build-cache'],{cwd:root,env,shell:W,timeout:o.timeout||15*60e3,onData:o.onData});
+const NONASCII=/[^\x00-\x7f]/;
+function asciiBase(){ const c=[process.env.IVANCODE_ASCII_DIR,W?(process.env.SystemDrive||'C:')+'\\IvanCodeBuild':path.join(os.tmpdir(),'ivancode-build'),W?(process.env.PUBLIC||'C:\\Users\\Public')+'\\IvanCodeBuild':null].filter(Boolean); for(const d of c){ if(NONASCII.test(d)) continue; try{ fs.mkdirSync(d,{recursive:true}); fs.accessSync(d,fs.constants.W_OK); return d }catch{} } return null }
+const SKIP=new Set(['build','.gradle','.ivancode','Готовая программа','ivancode-out']);
+function mirror(root,base){ const id=require('crypto').createHash('sha1').update(root).digest('hex').slice(0,10); const dst=path.join(base,'p-'+id); fs.mkdirSync(dst,{recursive:true});
+ for(const n of fs.readdirSync(root)){ if(SKIP.has(n)) continue; fs.cpSync(path.join(root,n),path.join(dst,n),{recursive:true,force:true,filter:src=>!/^(build|\.gradle)$/.test(path.basename(src))}) } return dst }
+function ktHealEnv(env,o={}){ const e={...env}; const notes=[]; const J=e.JAVA_HOME; if(J&&!fs.existsSync(path.join(J,'bin',W?'java.exe':'java'))){ delete e.JAVA_HOME; notes.push('JAVA_HOME указывал на несуществующую Java — убрал') }
+ if(!e.JAVA_HOME&&o.jdk){ e.JAVA_HOME=o.jdk; notes.push('JAVA_HOME = '+o.jdk) }
+ const home=o.home||os.homedir(); if(!e.GRADLE_USER_HOME&&NONASCII.test(home)){ const b=o.base||asciiBase(); if(b){ e.GRADLE_USER_HOME=path.join(b,'gradle-home'); notes.push('кэш Gradle перенесён в папку без русских букв: '+e.GRADLE_USER_HOME) } }
+ return {env:e,notes} }
+const DAEMON=/Gradle build daemon disappeared|Could not connect to the Gradle daemon|Timeout waiting to lock|Could not create service of type|is locked by another process|The process cannot access the file because it is being used/i;
+async function ktBuild(root,o={}){ const h=ktHealEnv(o.env||process.env,{jdk:o.jdk}); const env=h.env; const heal=[...h.notes]; const apk=path.join(root,...APK_REL); try{ fs.rmSync(apk,{force:true}) }catch{}
+ let dir=root; if(NONASCII.test(root)&&(W||o.forceMirror)){ const b=o.base||asciiBase(); if(b){ dir=mirror(root,b); heal.push('в пути проекта русские буквы — собираю в копии '+dir) } }
+ const g=gradleExe(env); const args=['assembleDebug','--console=plain','-q','--build-cache','-Pandroid.overridePathCheck=true'];
+ let r=await run(g,args,{cwd:dir,env,shell:W,timeout:o.timeout||15*60e3,onData:o.onData});
+ if(r.code!==0&&DAEMON.test(r.out)){ heal.push('демон Gradle завис — перезапускаю'); await run(g,['--stop'],{cwd:dir,env,shell:W,timeout:60e3}); r=await run(g,args,{cwd:dir,env,shell:W,timeout:o.timeout||15*60e3,onData:o.onData}) }
+ const built=path.join(dir,...APK_REL); if(dir!==root&&r.code===0&&fs.existsSync(built)){ fs.mkdirSync(path.dirname(apk),{recursive:true}); fs.copyFileSync(built,apk) }
  const errors=K.parseErrors(r.out); const ok=r.code===0&&fs.existsSync(apk);
- return {ok,errors,env:ok?null:(errors.length?null:(K.envProblem(r.out)||'Gradle завершился с ошибкой (код '+r.code+')')),apk:ok?apk:null,ms:r.ms,out:r.out.slice(-6000)} }
+ return {ok,errors,heal,dir,env:ok?null:(errors.length?null:(K.envProblem(r.out)||'Gradle завершился с ошибкой (код '+r.code+')')),apk:ok?apk:null,ms:r.ms,out:r.out.slice(-6000)} }
 /** прогрев: собрать пустую заготовку, чтобы Gradle скачал плагины и запустил демон (следующие сборки — секунды) */
 async function ktPrewarm(dir,o={}){ fs.mkdirSync(dir,{recursive:true}); ktWrite(dir,'Прогрев',K.DEFAULT_BODY,{sdk:o.sdk}); return ktBuild(dir,o) }
 // ---------- Понятный ----------
@@ -39,7 +53,7 @@ async function ponBuild(file,exe,o={}){ fs.mkdirSync(path.dirname(exe),{recursiv
  return {ok,exe:ok?exe:null,size:ok?fs.statSync(exe).size:0,errors:P.parseErrors(r.out).filter(e=>e.kind==='error'),out:r.out,ms:r.ms} }
 const LANGS={python:'.py',javascript:'.js',csharp:'.cs'};
 async function ponTranslate(file,lang,o={}){ if(!LANGS[lang]) return {ok:false,out:'неизвестный язык: '+lang}; const r=await ponRun(['перевести',path.basename(file),'--в',lang,...(o.latin?['--латиница']:[])],{...o,cwd:path.dirname(file)}); const outF=file.replace(/\.pon$/i,'')+LANGS[lang]; return {ok:r.code===0&&fs.existsSync(outF),file:outF,out:r.out,ms:r.ms} }
-module.exports={run,writeTree,ktWrite,ktBuild,ktPrewarm,APK_REL,ponBin,ponRun,ponCheck,ponSmoke,ponBuild,ponTranslate,LANGS};
+module.exports={ktHealEnv,mirror,asciiBase,run,writeTree,ktWrite,ktBuild,ktPrewarm,APK_REL,ponBin,ponRun,ponCheck,ponSmoke,ponBuild,ponTranslate,LANGS};
 // самоучитель: проверить и запустить кусок кода во временной папке (+ файлы урока)
 async function ponTry(code,o={}){ const d=fs.mkdtempSync(path.join(os.tmpdir(),'pon-tut-')); try{ for(const [n,t] of Object.entries(o.files||{})) fs.writeFileSync(path.join(d,n),t); const f=path.join(d,'урок.pon'); fs.writeFileSync(f,code);
  const c=await ponCheck(f,o); if(!c.ok) return {compiled:false,error:P.fmtErrors(c.errors).join('\n')||c.out,out:c.out,warns:c.warns};

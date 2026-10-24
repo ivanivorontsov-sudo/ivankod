@@ -1,5 +1,5 @@
 // ИванКод: автоматизация веб-чатов ИИ (на основе модуля ПрокурорПлюс). Селекторы можно переопределить в sites.json.
-(()=>{if(window.__pp&&window.__pp.v===6)return;
+(()=>{if(window.__pp&&window.__pp.v===7)return;
 const host=window.__ppForce||location.host;
 const SITE=/deepseek/.test(host)?'deepseek':/giga/.test(host)?'gigachat':/qwen/.test(host)?'qwen':/claude/.test(host)?'claude':/grok/.test(host)?'grok':/chatgpt|openai/.test(host)?'chatgpt':/alice|yandex/.test(host)?'alice':/mistral/.test(host)?'mistral':'other';
 // Известные селекторы ответов ассистента (могут меняться — есть эвристика-резерв)
@@ -33,7 +33,7 @@ function codeOf(x){ // редакторы кода внутри ответа (Mo
 function editor(){if(OV.input){const e=[...document.querySelectorAll(OV.input)].filter(vis);if(e.length)return e[e.length-1]}const c=[...document.querySelectorAll('textarea,[contenteditable=true],div[role=textbox]')].filter(vis);return c[c.length-1]||null}
 function composer(ed){let e=ed;for(let i=0;i<7&&e&&e.parentElement;i++){e=e.parentElement;if(e.tagName==='FORM'||e.querySelectorAll('button').length>=2)return e}return ed&&ed.parentElement}
 function busy(){if(OV.busy&&document.querySelector(OV.busy))return true;if(SITE==='claude'&&document.querySelector('[data-is-streaming=true]'))return true;
- return [...document.querySelectorAll('button,[role=button]')].some(b=>vis(b)&&/(^|\W)(stop|остановить|прервать|стоп)/i.test((b.getAttribute('aria-label')||'')+' '+(b.title||'')+' '+(b.getAttribute('data-testid')||'')+' '+String(b.className||'')+' '+(b.innerText||'').slice(0,30)))||[...document.querySelectorAll('button,[role=button],span,div')].some(b=>b.childElementCount===0&&vis(b)&&/^(skip|пропустить)$/i.test((b.innerText||'').trim()))||!!document.querySelector('[class*=stop-button],[class*=StopButton],[class*=thinking-loading],[class*=typing-cursor],[class*=is-streaming],[class*=generating]')}
+ return [...document.querySelectorAll('button,[role=button]')].some(b=>vis(b)&&/(^|\W)(stop|остановить|прервать|стоп)/i.test((b.getAttribute('aria-label')||'')+' '+(b.title||'')+' '+(b.getAttribute('data-testid')||'')+' '+String(b.className||'')+' '+(b.innerText||'').slice(0,30)))||[...document.querySelectorAll('button,[role=button],span,div')].some(b=>b.childElementCount===0&&vis(b)&&/^(skip|пропустить)$/i.test((b.innerText||'').trim()))||[...document.querySelectorAll('[class*=stop-button],[class*=StopButton],[class*=thinking-loading],[class*=typing-cursor],[class*=is-streaming],[class*=generating]')].some(vis)}
 const st={head:'',before:0,snap:'',t0:0};
 const GATE=/^(continue|продолжить|accept|accept all|принять|принять все|ok|ок|got it|понятно|stay logged out|остаться без входа|не входить|maybe later|позже|skip|пропустить|agree|согласен|i agree)$/i;
 function gates(){ let n=0; for(const d of document.querySelectorAll('[role=dialog],[role=alertdialog],[class*=cookie],[id*=cookie],[class*=consent]')){ if(!vis(d)) continue;
@@ -48,17 +48,17 @@ function heuristic(){const ed=editor(),cp=ed&&composer(ed);let best=null,bl=0;
   if(it.length>bl){bl=it.length;best=e}}
  return best?ext(best):''}
 function lastAny(){const a=siteList();if(a.length)return {text:ext(a[a.length-1]),method:'selector:'+SITE};const g=[...document.querySelectorAll(GEN)].filter(vis);if(g.length)return {text:ext(g[g.length-1]),method:'generic'};return {text:'',method:'none'}}
-window.__pp={v:6,gates,site:SITE,ext,
+window.__pp={v:7,gates,site:SITE,ext,
  mark(p){st.head=norm(p).slice(0,80);st.before=siteList().length;st.snap=norm(document.body.innerText);st.t0=Date.now();
   document.body.querySelectorAll('*').forEach(e=>e.setAttribute('data-pp-old',''));return JSON.stringify({site:SITE,before:st.before,editor:!!editor()})},
- async send(p){if(gates())await new Promise(r=>setTimeout(r,800));const ed=editor();if(!ed)return 'noinput';ed.focus();
+ async send(p){if(gates())await new Promise(r=>setTimeout(r,300));const ed=editor();if(!ed)return 'noinput';ed.focus();
   if(ed.tagName==='TEXTAREA'){const set=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;set.call(ed,p);ed.dispatchEvent(new Event('input',{bubbles:true}));ed.dispatchEvent(new Event('change',{bubbles:true}))}
   else{document.execCommand('selectAll',false);document.execCommand('insertText',false,p);if(norm(ed.innerText).length<5){ed.textContent=p;ed.dispatchEvent(new InputEvent('input',{bubbles:true,data:p,inputType:'insertText'}))}}
-  await new Promise(r=>setTimeout(r,700));
+  for(let k=0;k<8;k++){ const v0=ed.tagName==='TEXTAREA'?ed.value:ed.innerText; if(norm(v0).length>3) break; await new Promise(r=>setTimeout(r,50)) } await new Promise(r=>setTimeout(r,150));
   const cp=composer(ed)||document;const bs=[...cp.querySelectorAll('button,[role=button]')].filter(b=>vis(b)&&!b.disabled&&b.getAttribute('aria-disabled')!=='true');
   let btn=OV.send?[...document.querySelectorAll(OV.send)].filter(vis).pop():null;if(!btn)btn=bs.find(b=>/send|отправ|submit/i.test((b.getAttribute('aria-label')||'')+' '+(b.title||'')+' '+(b.getAttribute('data-testid')||'')+' '+String(b.className||'')+' '+(b.id||'')+' '+(b.getAttribute('type')==='submit'?'submit':'')));
   if(!btn)btn=[...document.querySelectorAll('button[aria-label],button[type=submit]')].reverse().find(b=>vis(b)&&!b.disabled&&/send|отправ|submit/i.test((b.getAttribute('aria-label')||'')+(b.getAttribute('type')||'')));
-  if(btn){btn.click();await new Promise(r=>setTimeout(r,1500));const v2=ed.tagName==='TEXTAREA'?ed.value:ed.innerText;if(norm(v2).length>3){const b2=OV.send?[...document.querySelectorAll(OV.send)].filter(vis).pop():btn;if(b2&&!b2.disabled)b2.click();else for(const ty of ['keydown','keyup'])ed.dispatchEvent(new KeyboardEvent(ty,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));return 'ok:button2'}return 'ok:button'}
+  if(btn){btn.click();for(let k=0;k<12;k++){await new Promise(r=>setTimeout(r,100));const vv=ed.tagName==='TEXTAREA'?ed.value:ed.innerText;if(norm(vv).length<=3)return 'ok:button'}const v2=ed.tagName==='TEXTAREA'?ed.value:ed.innerText;if(norm(v2).length>3){const b2=OV.send?[...document.querySelectorAll(OV.send)].filter(vis).pop():btn;if(b2&&!b2.disabled)b2.click();else for(const ty of ['keydown','keyup'])ed.dispatchEvent(new KeyboardEvent(ty,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));return 'ok:button2'}return 'ok:button'}
   for(const ty of ['keydown','keypress','keyup'])ed.dispatchEvent(new KeyboardEvent(ty,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}));return 'ok:enter'},
  pending(){const ed=editor();if(!ed)return false;const v=ed.tagName==='TEXTAREA'?ed.value:ed.innerText;return norm(v).length>3&&st.head.startsWith(norm(v).slice(0,40))},
  clickLast(){const ed=editor();const cp=composer(ed)||document;const bs=[...cp.querySelectorAll('button,[role=button]')].filter(b=>vis(b)&&!b.disabled);const b=bs[bs.length-1];if(b){b.click();return 'clicked:'+(b.getAttribute('aria-label')||b.className||'?').toString().slice(0,40)}return 'nobutton'},
