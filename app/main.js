@@ -223,7 +223,7 @@ ipcMain.handle('fs:unlink',(e,f)=>{ try{ fs.unlinkSync(f); return true }catch{ r
 const { WebContentsView } = require('electron');
 let webV=null, webVis=false, webRect={x:0,y:0,width:10,height:10};
 function webEnsure(){ if(webV) return webV; webV=new WebContentsView({webPreferences:{partition:'persist:ivancode-web',backgroundThrottling:false,contextIsolation:true}});
- webV.webContents.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/'+process.versions.chrome+' Safari/537.36');
+ webV.webContents.setUserAgent('Mozilla/5.0 ('+(process.platform==='win32'?'Windows NT 10.0; Win64; x64':process.platform==='darwin'?'Macintosh; Intel Mac OS X 10_15_7':'X11; Linux x86_64')+') AppleWebKit/537.36 (KHTML, like Gecko) Chrome/'+process.versions.chrome+' Safari/537.36');
  webV.webContents.setWindowOpenHandler(({url})=>{ webV.webContents.loadURL(url); return {action:'deny'} });
  win.contentView.addChildView(webV); webPlace(); return webV }
 function webPlace(){ if(!webV) return; if(webVis) webV.setBounds(webRect); else { const [w,h]=win.getContentSize(); webV.setBounds({x:w-2,y:h-2,width:900,height:800}) } } // скрыт: почти целиком за краем, но продолжает рендериться
