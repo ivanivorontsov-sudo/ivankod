@@ -31,5 +31,17 @@ function init(T){
  ipcMain.handle('pon:build',(e,file,exe)=>NB.ponBuild(file,exe));
  ipcMain.handle('pon:try',(e,code,o)=>NB.ponTry(String(code),o||{}));
  ipcMain.handle('pon:translate',(e,file,lang)=>NB.ponTranslate(file,lang));
+ // 1.4: декомпиляция (программа не запускается; инструменты скачиваются по требованию в папку инструментов)
+ ipcMain.handle('decomp:pick',async()=>{ const {dialog}=require('electron'); const w=BrowserWindow.getFocusedWindow(); const r=await dialog.showOpenDialog(w,{title:'Какую программу декомпилировать?',properties:['openFile'],filters:[{name:'Программы',extensions:['apk','dex','jar','class','exe','dll','pyc','so','elf','bin','aab']},{name:'Все файлы',extensions:['*']}]}); return r.canceled?null:r.filePaths[0] });
+ ipcMain.handle('decomp:run',async(e,file,o={})=>{ const DC=require('./decomp/decomp.js'); const log=t=>send('decomp:log',String(t));
+  try{ const W=process.platform==='win32'; const docs=path.join(app.getPath('documents'),'ИванКод — мои программы','Декомпиляция');
+   const name=path.basename(file).replace(/[^\p{L}\p{N}._-]+/gu,'_'); const outDir=path.join(docs,name.replace(/\.[^.]+$/,'')+'-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-'));
+   const env=DC.makeEnv({root:path.join(T.TROOT(),'decomp'),log,download:(u,f)=>T.download(u,f,(d,t)=>{ if(t) log('\r'+Math.round(d/t*100)+'% ') }),extract:(z,d)=>T.extract(z,d),python:()=>{ const f=T.found('python'); return f&&f.found?f.path:null }});
+   const java=()=>{ const j=T.goodJdk(); return j?path.join(j.home,'bin',W?'java.exe':'java'):null };
+   const dotnet=()=>{ const f=T.found('dotnet'); return f&&f.found?f.path:null };
+   const pycdc=()=>{ const f=path.join(T.TROOT(),'decomp',W?'pycdc.exe':'pycdc'); return fs.existsSync(f)?f:null };
+   if(o.installJdk){ await T.install('jdk',log) } if(o.installDotnet){ await T.install('dotnet',log) }
+   return await DC.decompile(file,{env,java,dotnet,python:env&&(()=>{ const f=T.found('python'); return f&&f.found?f.path:null }),pycdc,allowGhidra:!!o.allowGhidra,outDir,log}) }
+  catch(err){ log('✖ '+err.message+'\n'); return {ok:false,error:String(err.message||err)} } });
 }
 module.exports={init};

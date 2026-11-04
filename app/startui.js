@@ -143,9 +143,23 @@ function devPon(){ if(typeof run!=='function'||devPon.done) return; devPon.done=
   await _run(); if(isPon) showIn() };
  try{ ACT.run=()=>run() }catch{}
  // кнопка «Перевести» рядом с «Запустить» — только для .pon; на сборку не влияет
- const rb=$q('#top [data-act=run]'); if(rb&&!$q('#b-tr')){ const b=document.createElement('button'); b.id='b-tr'; b.textContent='🔁 Перевести'; b.title='Перевести эту программу на «Понятном» в другой язык (новый файл рядом; сборку не меняет)'; b.style.display='none'; rb.after(b); b.onclick=()=>translateDlg();
+ const rb=$q('#top [data-act=run]'); if(rb&&!$q('#b-tr')){ const b=document.createElement('button'); b.id='b-tr'; b.textContent='🔁 Перевести'; b.title='Перевести эту программу на «Понятном» в другой язык (новый файл рядом; сборку не меняет)'; b.style.display='none'; rb.after(b); b.onclick=()=>translateDlg(); const d=document.createElement('button'); d.id='b-dec'; d.textContent='🔓 Декомпилировать'; d.title='Открыть готовую программу (APK, JAR, .NET, Python, exe) и посмотреть её код на «Понятном». Программа не запускается'; b.after(d); d.onclick=()=>decompDlg();
   setInterval(()=>{ const on=!!(S.cur&&/\.pon$/i.test(S.cur.path)); b.style.display=on?'':'none' },700) } }
 const LANGS=[['csharp','C#','.cs'],['python','Python','.py'],['javascript','JavaScript','.js']];
+// 1.4: декомпиляция — открыть готовую программу (APK, JAR, .NET, Python, exe) и увидеть её код на «Понятном»
+window.decompDlg=async function(){ const f=await api.decompPick(); if(!f) return;
+ const o=overlay('decdlg',`<header><h2>🔓 Декомпиляция «${esc(f.split(/[\\/]/).pop())}»</h2><button class="ivk-x" data-a="x">✕</button></header><div class="wb" style="padding:18px 24px;flex:1;display:flex;flex-direction:column;gap:10px"><p>ИванКод восстановит код программы готовыми декомпиляторами (JADX, CFR, ILSpy, decompyle3, Ghidra) и переведёт его на «Понятный». <b>Сама программа не запускается.</b> Нужные инструменты скачаются один раз.</p><div id="dec-act"></div><pre id="dec-log" style="flex:1;min-height:180px;max-height:50vh;overflow:auto;white-space:pre-wrap;background:var(--bg2,#111);padding:10px;border-radius:8px"></pre></div>`);
+ const pre=o.querySelector('#dec-log'), act=o.querySelector('#dec-act'); pre.textContent='';
+ const lg=t=>{ t=String(t); if(t.startsWith('\r')){ pre.textContent=pre.textContent.replace(/\d+% $/,'')+t.slice(1) } else pre.textContent+=t; pre.scrollTop=pre.scrollHeight };
+ if(!window.__decLog){ window.__decLog=true; api.on('decomp:log',t=>{ if(window.__decLg) window.__decLg(t) }) } window.__decLg=lg;
+ o.onclick=e=>{ if(e.target.closest('[data-a=x]')) o.classList.add('hidden') };
+ const go=async(opt)=>{ act.innerHTML=''; const r=await api.decompRun(f,opt||{});
+  if(r.ok){ try{ if(S.root){ $q('#tree').innerHTML=''; await renderDir(S.root,$q('#tree'),0) } }catch{} await openFile(r.ponFile); toast('Открыт перевод: '+r.ponFile.split(/[\\/]/).pop());
+   act.innerHTML=`<p>✔ Готово. Код декомпилятора — в папке «исходник» рядом: <button data-a="dir">Открыть папку</button></p>`; act.querySelector('[data-a=dir]').onclick=()=>api.openPath(r.outDir); return }
+  const need={jdk:['installJdk','Установить JDK 17 и продолжить'],dotnet:['installDotnet','Установить .NET 8 и продолжить'],ghidra:['allowGhidra','Скачать Ghidra (~400 МБ) и продолжить']}[r.need];
+  act.innerHTML=`<p>✖ ${esc(r.error||'не получилось')}</p>`+(need?`<button data-a="need">${need[1]}</button>`:'');
+  if(need) act.querySelector('[data-a=need]').onclick=()=>go({...(opt||{}),[need[0]]:true}) };
+ go() };
 window.translateDlg=function(){ const t=S.cur; if(!t||!/\.pon$/i.test(t.path)) return toast('Откройте файл .pon');
  const o=overlay('trdlg',`<header><h2>🔁 Перевести «${esc(t.path.split(/[\\/]/).pop())}»</h2><button class="ivk-x" data-a="x">✕</button></header><div class="wb" style="padding:18px 24px;flex:1"><p>Выберите язык. Получится новый файл рядом с программой — его можно изучать и сравнивать. Сама программа и её сборка не меняются.</p><div class="row" style="display:flex;gap:10px">${LANGS.map(l=>`<button class="p" data-l="${l[0]}" style="font-size:16px;padding:12px 22px">${l[1]}</button>`).join('')}</div><p style="color:#5a6080;font-size:13.5px">Переводчик компилятора «Понятный» умеет: ${LANGS.map(l=>l[1]).join(', ')}. В Kotlin перевода нет.</p><pre id="tr-out" style="white-space:pre-wrap;background:#f4f6fb;border-radius:10px;padding:10px;max-height:300px;overflow:auto"></pre></div>`);
  o.querySelector('.ivk-win').style.height='auto'; o.onclick=async e=>{ if(e.target.closest('[data-a=x]')) return o.classList.add('hidden'); const b=e.target.closest('[data-l]'); if(!b) return; const pre=o.querySelector('#tr-out'); pre.textContent='Перевожу…'; await save(t);

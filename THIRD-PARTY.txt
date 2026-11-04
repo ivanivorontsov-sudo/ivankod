@@ -173,3 +173,16 @@ Chromium (в составе Electron): см. LICENSES.chromium.html в папк�
 Inter — Copyright 2016 The Inter Project Authors. SIL Open Font License 1.1.
 JetBrains Mono — Copyright 2020 The JetBrains Mono Project Authors. SIL Open Font License 1.1.
 Модуль автоматизации веб-чатов основан на модуле ПрокурорПлюс (© Воронцов Иван Игоревич).
+
+==================== Декомпиляция (ИванКод 1.4) ====================
+В программу ВСТРОЕНЫ (лицензия MIT, тексты — app/decomp/ts/LICENSE-*.txt):
+ • web-tree-sitter 0.25 — Copyright (c) 2018-2024 Max Brunsfeld и авторы tree-sitter. MIT.
+ • tree-sitter-java 0.23.5, tree-sitter-c-sharp 0.23.5, tree-sitter-c 0.24.1 — авторы tree-sitter. MIT.
+СКАЧИВАЮТСЯ ПО ТРЕБОВАНИЮ с официальных страниц (в установщик не входят, запускаются как отдельные программы):
+ • JADX 1.5.1 — skylot и авторы, Apache License 2.0 — https://github.com/skylot/jadx
+ • CFR 0.152 — Lee Benfield, MIT — https://github.com/leibnitz27/cfr
+ • ILSpy / ilspycmd 9.0 — ICSharpCode, MIT — https://github.com/icsharpcode/ILSpy
+ • pyinstxtractor — extremecoders-re, GPL-3.0 — https://github.com/extremecoders-re/pyinstxtractor
+ • decompyle3, uncompyle6, xdis — R. Bernstein и авторы, GPL-3.0 (через pip) — https://github.com/rocky
+ • pycdc (Decompyle++) — если положить pycdc.exe в папку инструментов decomp, GPL-3.0 — https://github.com/zrax/pycdc
+ • Ghidra 10.4 — NSA, Apache License 2.0 (по желанию, ~400 МБ) — https://github.com/NationalSecurityAgency/ghidra
