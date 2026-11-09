@@ -31,6 +31,12 @@
     "глобальная": "глобальная", "глобальный": "глобальная", "глобальное": "глобальная",
     "убедись": "убедись", "утверждаю": "убедись", "клянусь": "убедись",
     "аминь": "конец", "всё": "конец", "кончено": "конец",
+    "метка": "метка", "ярлык": "метка",
+    "иди": "иди", "перейди": "иди", "перейти": "иди", "прыгни": "иди", "goto": "иди",
+    "поток": "поток", "нить": "поток", "параллельно": "поток",
+    "асинхронная": "асинхронная", "асинхронный": "асинхронная", "асинхронно": "асинхронная",
+    "с": "с", "используя": "с", "взяв": "с",
+    "из": "из",
   };
   const NO_ARG_WORDS = new Set(["стоп", "дальше", "попробуй", "делай", "конец", "верни"]);
   const PHRASES = [
@@ -44,6 +50,8 @@
     ["до посинения", ["kw:пока", "kw:истина"]], ["пока не надоест", ["kw:пока", "kw:истина"]],
     ["на этом всё", ["kw:конец"]], ["вот и сказочке конец", ["kw:конец"]],
     ["выведи на экран", ["kw:напиши"]], ["напиши на экран", ["kw:напиши"]], ["скажи миру", ["kw:напиши"]],
+    ["иди к", ["id:иди"]], ["перейди к", ["id:иди"]], ["перейти к", ["id:иди"]], ["прыгни к", ["id:иди"]], ["беги к", ["id:иди"]], ["телепортируйся к", ["id:иди"]],
+    ["в фоне", ["id:поток"]],
   ].map(([w, t]) => [w.split(" ").map(normWord), t]).sort((a, b) => b[0].length - a[0].length);
   const WORD_FORMS = { "раз": ["раза"], "каждого": ["каждый", "каждой", "каждое", "каждую", "каждому"], "до": ["по"], "от": ["с"], "шаг": ["шагом"], "из": ["в", "среди"] };
   const CLASS_MODS = new Map([["общая", "static"], ["общий", "static"], ["общее", "static"], ["статическая", "static"], ["статический", "static"], ["статичная", "static"], ["скрытая", "private"], ["скрытый", "private"], ["скрытое", "private"], ["приватная", "private"], ["приватный", "private"], ["закрытая", "private"], ["закрытый", "private"], ["абстрактная", "abstract"], ["абстрактный", "abstract"]]);
@@ -254,8 +262,8 @@
       }
       if (src.substr(i, 3) === "?.[") { push("op", "?.[", i); i += 3; continue; }
       const two = src.substr(i, 2);
-      if (["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "%=", "|>", "?.", "->"].includes(two)) { push("op", two, i); i += 2; continue; }
-      if ("+-*/%^()<>=,[]{}.:".includes(c)) { push("op", c, i); i++; continue; }
+      if (["==", "!=", "<=", ">=", "=>", "+=", "-=", "*=", "/=", "%=", "|>", "?.", "->", ":=", "::"].includes(two)) { push("op", two, i); i += 2; continue; }
+      if ("+-*/%^()<>=,[]{}.:&".includes(c)) { push("op", c, i); i++; continue; }
       const uni = { "≠": "!=", "≤": "<=", "≥": ">=", "×": "*", "÷": "/" };
       if (uni[c]) { push("op", uni[c], i); i++; continue; }
       const cp = src.codePointAt(i);
@@ -320,6 +328,11 @@
       if (is("id")) return next();
       if (is("kw")) fail("«" + peek().v + "» — служебное слово, его нельзя использовать как " + what);
       fail("ожидалось " + what + ", а встретилось " + describe(peek()));
+    };
+    const expectBindName = (what) => {
+      if (is("id")) return next();
+      if (is("kw", "в")) return next();
+      return expectName(what);
     };
     const skipNl = () => { while (is("nl")) next(); };
     const endLine = () => { if (!is("eof") && !accept("nl")) fail("ожидался конец строки, а встретилось " + describe(peek()) + ". Каждая команда пишется на отдельной строке"); };
@@ -389,7 +402,7 @@
       if (++depth > MAX_DEPTH) fail("слишком глубокая вложенность (больше " + MAX_DEPTH + " уровней)");
       try { return statementInner(); } finally { depth--; }
     }
-    const STMT_WORDS = ["пусть", "константа", "напиши", "если", "пока", "повторить", "для", "функция", "верни", "брось", "выбор", "класс", "структура", "подключи"];
+    const STMT_WORDS = ["пусть", "константа", "напиши", "если", "пока", "повторить", "для", "функция", "верни", "брось", "выбор", "класс", "структура", "подключи", "метка", "поток"];
     function statementInner() {
       applyAliases();
       if (is("id") && !peek().aliased && !["op", "nl", "eof"].includes(peek(1).t)) {
@@ -517,9 +530,9 @@
       }
       if (accept("kw", "для")) {
         if (acceptW("каждого")) {
-          const a = expectName("имя переменной").v;
+          const a = expectBindName("имя переменной").v;
           let b = null;
-          if (accept("op", ",")) b = expectName("имя переменной").v;
+          if (accept("op", ",")) b = expectBindName("имя переменной").v;
           expectW("из");
           const list = expr();
           return { k: "foreach", name: a, name2: b, list, body: loopBody(tok), ...P };
@@ -533,6 +546,15 @@
         let step = null;
         if (acceptW("шаг")) step = expr();
         return { k: "forrange", name, from, to, step, body: loopBody(tok), ...P };
+      }
+      if (isNew("асинхронная")) {
+        next();
+        if (!accept("kw", "функция")) fail("после «асинхронная» нужно слово «функция»");
+        if (is("op", "(")) fail("безымянную асинхронную функцию пока можно писать только как «асинхронная функция имя(...)»");
+        const nameTok = expectName("имя функции");
+        const fn = funcRest(tok, nameTok.v, false);
+        fn.async = true;
+        return fn;
       }
       if (accept("kw", "функция")) {
         if (is("op", "(")) { p--; return exprStatement(tok); }
@@ -652,9 +674,39 @@
             checkMember(mn);
             if (accept("op", "(")) expect("op", ")", "«)»");
             endLine();
-            const body = block(["конец"], mt);
-            closeEnd();
-            methods.push({ k: "func", name: mn.v, params: [], ret: null, body, method: true, getter: true, static: mods.has("static"), priv: mods.has("private"), ...pos(mt) });
+            skipNl();
+            const GETW = new Set(["получить", "получи", "взять", "геттер"]);
+            const SETW = new Set(["установить", "установи", "поставить", "поставь", "сеттер"]);
+            if (is("id") && (GETW.has(normWord(peek().v)) || SETW.has(normWord(peek().v)))) {
+              let getter = null, setter = null, setParam = "значение";
+              while (!isW("конец")) {
+                const at = peek();
+                if (is("eof")) fail("не хватает слова «конец» для свойства «" + mn.v + "»", mt);
+                if (is("id") && GETW.has(normWord(peek().v))) {
+                  next();
+                  accept("kw", "то");
+                  endLine();
+                  getter = block(["конец"], at);
+                  closeEnd();
+                } else if (is("id") && SETW.has(normWord(peek().v))) {
+                  next();
+                  if (is("id") && !GETW.has(normWord(peek().v)) && !SETW.has(normWord(peek().v)) && (peek(1).t === "nl" || peek(1).t === "eof" || (peek(1).t === "kw" && peek(1).v === "то"))) setParam = next().v;
+                  accept("kw", "то");
+                  endLine();
+                  setter = block(["конец"], at);
+                  closeEnd();
+                } else fail("внутри свойства пишите «получить» и «установить значение», а встретилось " + describe(peek()));
+                skipNl();
+              }
+              closeEnd();
+              if (!getter && !setter) fail("у свойства «" + mn.v + "» нет ни «получить», ни «установить»", mt);
+              if (getter) methods.push({ k: "func", name: mn.v, params: [], ret: null, body: getter, method: true, getter: true, static: mods.has("static"), priv: mods.has("private"), ...pos(mt) });
+              if (setter) methods.push({ k: "func", name: mn.v, params: [{ name: setParam, type: null, def: null, ...pos(mt) }], ret: null, body: setter, method: true, setter: true, static: mods.has("static"), priv: mods.has("private"), ...pos(mt) });
+            } else {
+              const body = block(["конец"], mt);
+              closeEnd();
+              methods.push({ k: "func", name: mn.v, params: [], ret: null, body, method: true, getter: true, static: mods.has("static"), priv: mods.has("private"), ...pos(mt) });
+            }
           } else fail("внутри класса можно писать только «функция», «пусть» и «свойство» (можно с «общая», «скрытая», «абстрактная»), а встретилось " + describe(peek()) + (is("id") ? suggest(peek().v, ["функция", "пусть", "свойство", "общая", "скрытая"]) : ""));
           skipNl();
         }
@@ -669,8 +721,58 @@
       }
       if (accept("kw", "подключи")) {
         const f = expect("str", undefined, "имя файла в кавычках");
+        let alias = null;
+        if (is("id") && normWord(peek().v) === "как") { next(); alias = expectName("имя модуля").v; }
         endLine();
-        return { k: "import", path: f.v, ...P };
+        return { k: "import", path: f.v, alias, names: null, ...P };
+      }
+      if (isNew("из")) {
+        next();
+        const f = expect("str", undefined, "имя файла в кавычках");
+        if (!(is("id") && ["возьми", "импортируй", "бери", "взять"].includes(normWord(peek().v)))) fail("после пути нужно слово «возьми» (например: из \"мат.pon\" возьми факториал)");
+        next();
+        const names = [];
+        do {
+          const nt = expectName("имя из модуля");
+          let as = nt.v;
+          if (is("id") && normWord(peek().v) === "как") { next(); as = expectName("новое имя").v; }
+          if (names.some((x) => x.as === as)) fail("имя «" + as + "» повторяется", nt);
+          names.push({ name: nt.v, as });
+        } while (accept("op", ","));
+        endLine();
+        return { k: "import", path: f.v, alias: null, names, ...P };
+      }
+      if (isNew("метка")) {
+        next();
+        const name = expectName("имя метки").v;
+        endLine();
+        return { k: "label", name, ...P };
+      }
+      if (isNew("иди")) {
+        next();
+        if (is("id") && normWord(peek().v) === "к") next();
+        const name = expectName("имя метки").v;
+        endLine();
+        return { k: "goto", name, ...P };
+      }
+      if (isNew("поток")) {
+        next();
+        endLine();
+        const body = block(["конец"], tok);
+        closeEnd();
+        return { k: "thread", body, ...P };
+      }
+      if (isNew("с")) {
+        next();
+        const value = expr();
+        let name = null;
+        if (is("id") && normWord(peek().v) === "как") { next(); name = expectName("имя переменной").v; }
+        else if (acceptW("как")) name = expectName("имя переменной").v;
+        if (!name) fail("после «с …» нужно «как имя»: с открой(\"а.txt\") как ф");
+        endLine();
+        const body = block(["конец"], tok);
+        closeEnd();
+        return { k: "with", value, name, body, ...P };
       }
       return exprStatement(tok);
     }
@@ -689,11 +791,11 @@
     function exprStatement(tok) {
       const P = pos(tok);
       const target = expr();
-      if (is("op", ",") && ["name", "index", "member"].includes(target.k)) {
+      if (is("op", ",") && ["name", "index", "member", "deref"].includes(target.k)) {
         const targets = [target];
         while (accept("op", ",")) {
           const t2 = expr();
-          if (!["name", "index", "member"].includes(t2.k)) fail("слева от «=» должны быть имена переменных, элементы списков или поля", t2);
+          if (!["name", "index", "member", "deref"].includes(t2.k)) fail("слева от «=» должны быть имена переменных, элементы списков, поля или разыменованные ссылки", t2);
           targets.push(t2);
         }
         expect("op", "=", "«=» (например: а, б = б, а)");
@@ -705,7 +807,7 @@
       const opTok = peek();
       if (is("op") && ["=", "+=", "-=", "*=", "/=", "%="].includes(opTok.v)) {
         next();
-        if (!["name", "index", "member"].includes(target.k)) fail("слева от «" + opTok.v + "» должно быть имя переменной, элемент списка или поле", opTok);
+        if (!["name", "index", "member", "deref"].includes(target.k)) fail("слева от «" + opTok.v + "» должно быть имя переменной, элемент списка, поле или разыменованная ссылка", opTok);
         const value = expr();
         endLine();
         return { k: "assign", target, op: opTok.v, value, ...P };
@@ -739,7 +841,15 @@
 
     function expr() {
       if (++depth > MAX_DEPTH) fail("слишком глубокая вложенность выражения (больше " + MAX_DEPTH + " уровней)");
-      try { return pipe(); } finally { depth--; }
+      try { return walrus(); } finally { depth--; }
+    }
+    function walrus() {
+      if (is("id") && peek(1).t === "op" && peek(1).v === ":=") {
+        const t = next();
+        next();
+        return { k: "walrus", name: t.v, value: walrus(), ...pos(t) };
+      }
+      return pipe();
     }
 
     function pipe() {
@@ -796,6 +906,32 @@
         if (++depth > MAX_DEPTH) fail("слишком глубокая вложенность выражения");
         try { const e = unary(); return t.v === "-" ? { k: "un", op: "-", e, ...pos(t) } : e; } finally { depth--; }
       }
+      if (is("op", "&")) {
+        const t = next();
+        return { k: "refof", target: unary(), ...pos(t) };
+      }
+      if (is("op", "*")) {
+        const nx = peek(1);
+        if (nx.t === "id" || nx.t === "kw" || (nx.t === "op" && ["(", "*", "&", "-"].includes(nx.v))) {
+          const t = next();
+          return { k: "deref", e: unary(), ...pos(t) };
+        }
+      }
+      if (is("id") && ["ссылка", "указатель"].includes(normWord(peek().v))) {
+        const nx = peek(1);
+        if (!(nx.t === "op" && nx.v !== "-" && nx.v !== "&" && nx.v !== "*")) {
+          const t = next();
+          if (is("id") && normWord(peek().v) === "на") next();
+          return { k: "refof", target: unary(), ...pos(t) };
+        }
+      }
+      if (is("id") && ["ждать", "ожидай", "жди"].includes(normWord(peek().v))) {
+        const nx = peek(1);
+        if (!(nx.t === "op" && !["(", "-", "+", "*", "&"].includes(nx.v))) {
+          const t = next();
+          return { k: "await", e: unary(), ...pos(t) };
+        }
+      }
       return power();
     }
     function power() {
@@ -833,13 +969,14 @@
           e = { k: "index", obj: e, index, safe, ...pos(t) };
           continue;
         }
-        if (is("op", ".") || is("op", "?.")) {
+        if (is("op", ".") || is("op", "?.") || is("op", "::")) {
           const t = next();
           if (t.v === "?.") safe = true;
           const nt = peek();
-          if (nt.t !== "id" && nt.t !== "kw") fail("после точки ожидалось имя поля или метода");
+          if (nt.t !== "id" && nt.t !== "kw") fail((t.v === "::" ? "после «::»" : "после точки") + " ожидалось имя поля или метода");
           if (nt.t === "id" && (/^__/.test(nt.v) || INTERNAL_NAMES.has(nt.v))) fail("«" + nt.v + "» — внутреннее имя JavaScript, обращаться к нему из программы нельзя", nt);
           next();
+          if (t.v === "::") { e = { k: "methodref", obj: e, name: nt.v, ...pos(nt) }; continue; }
           if (is("op", "(")) { e = { k: "mcall", obj: e, name: nt.v, args: callArgs(), safe, ...pos(nt) }; continue; }
           e = { k: "member", obj: e, name: nt.v, safe, ...pos(nt) };
           continue;
@@ -861,14 +998,115 @@
       if (accept("kw", "ничего")) return { k: "null", ...P };
       if (accept("kw", "это") || accept("kw", "себя")) return { k: "this", ...P };
       if (accept("kw", "родитель")) {
+        if (is("op", "(")) return { k: "super", name: "создать", args: callArgs(), ctor: true, ...P };
         expect("op", ".");
         const nt = expectName("имя метода");
         return { k: "super", name: nt.v, args: callArgs(), ...P };
       }
       if (accept("kw", "новый")) {
-        const nt = expectName("имя класса");
+        let name = null;
+        if (is("id")) name = next().v;
         const args = is("op", "(") ? callArgs() : [];
-        return { k: "new", name: nt.v, args, ...P };
+        if (accept("op", ":")) {
+          endLine();
+          skipNl();
+          const methods = [];
+          const fields = [];
+          while (!isW("конец")) {
+            const mt = peek();
+            if (is("eof")) fail("не хватает слова «конец» для безымянного класса", tok);
+            const mods = new Set();
+            while (is("id") && CLASS_MODS.has(normWord(peek().v)) && peek(1).t !== "op" && peek(1).t !== "nl") mods.add(CLASS_MODS.get(normWord(next().v)));
+            if (accept("kw", "функция")) {
+              const mn = expectName("имя метода");
+              checkMember(mn);
+              const m = funcRest(mt, mn.v, true);
+              m.static = mods.has("static");
+              m.priv = mods.has("private");
+              methods.push(m);
+            } else if (accept("kw", "пусть")) {
+              const f = expectName("имя поля");
+              checkMember(f);
+              typeAnn();
+              let value = null;
+              if (accept("op", "=")) value = expr();
+              endLine();
+              fields.push({ name: f.v, value, static: mods.has("static"), priv: mods.has("private"), ...pos(f) });
+            } else if (is("id") && normWord(peek().v) === "свойство") {
+              next();
+              const mn = expectName("имя свойства");
+              checkMember(mn);
+              endLine();
+              const body = block(["конец"], mt);
+              closeEnd();
+              methods.push({ k: "func", name: mn.v, params: [], ret: null, body, method: true, getter: true, static: mods.has("static"), priv: mods.has("private"), ...pos(mt) });
+            } else fail("внутри безымянного класса пишут «функция», «пусть» и «свойство», а встретилось " + describe(peek()));
+            skipNl();
+          }
+          expectW("конец");
+          return { k: "anonclass", parent: name, args, methods, fields, ...P };
+        }
+        if (!name) fail("после «новый» нужно имя класса или «:» для безымянного класса");
+        return { k: "new", name, args, ...P };
+      }
+      if (is("id") && ["поток", "нить"].includes(normWord(peek().v)) && (peek(1).t === "nl" || peek(1).t === "eof")) {
+        const t = next();
+        endLine();
+        const body = block(["конец"], t);
+        expectW("конец");
+        return { k: "thread", body, ...P };
+      }
+      if (accept("kw", "выбор")) {
+        const subject = expr();
+        endLine();
+        skipNl();
+        const cases = [];
+        let def = null;
+        const enders = ["вариант", "когда", "иначе", "конец"];
+        while (!isW("конец")) {
+          const ct = peek();
+          if (is("eof")) fail("не хватает слова «конец» для «выбор» из строки " + tok.line, tok);
+          if (def) fail("«иначе» в «выбор» должно быть последним", ct);
+          if (accept("kw", "вариант")) {
+            const values = [expr()];
+            while (accept("op", ",")) values.push(expr());
+            let guard = null;
+            if (accept("kw", "если")) guard = expr();
+            accept("kw", "то");
+            if (!is("nl") && !is("eof") && !(is("kw") && ["вариант", "когда", "иначе", "конец"].includes(peek().v))) {
+              const value = expr();
+              endLine();
+              cases.push({ values, guard, bind: null, value, body: null, ...pos(ct) });
+            } else {
+              endLine();
+              cases.push({ values, guard, bind: null, value: null, body: block(enders, ct), ...pos(ct) });
+            }
+          } else if (accept("kw", "когда")) {
+            const bind = expectName("имя").v;
+            let guard = null;
+            if (accept("kw", "если")) guard = expr();
+            accept("kw", "то");
+            if (!is("nl") && !is("eof") && !(is("kw") && ["вариант", "когда", "иначе", "конец"].includes(peek().v))) {
+              const value = expr();
+              endLine();
+              cases.push({ values: null, guard, bind, value, body: null, ...pos(ct) });
+            } else {
+              endLine();
+              cases.push({ values: null, guard, bind, value: null, body: block(enders, ct), ...pos(ct) });
+            }
+          } else if (accept("kw", "иначе")) {
+            if (!is("nl") && !is("eof") && !isW("конец")) {
+              def = [{ k: "return", value: expr(), ...pos(ct) }];
+              endLine();
+            } else {
+              endLine();
+              def = block(enders, ct);
+            }
+          } else fail("внутри «выбор» ожидалось «вариант», «когда» или «иначе», а встретилось " + describe(peek()));
+          skipNl();
+        }
+        expectW("конец");
+        return { k: "switchexpr", subject, cases, def, ...P };
       }
       if (accept("id")) {
         if (is("op", "=>")) { next(); return { k: "lambda", params: [{ name: tok.v, def: null, type: null, ...P }], body: null, value: expr(), ...P }; }
@@ -900,11 +1138,31 @@
       if (accept("op", "[")) {
         const items = [];
         skipNl();
-        while (!is("op", "]")) {
-          items.push(expr());
+        if (is("op", "]")) { next(); return { k: "list", items, ...P }; }
+        const first = expr();
+        skipNl();
+        if (accept("kw", "для")) {
+          expectW("каждого");
+          const a = expectBindName("имя переменной").v;
+          let b = null;
+          if (accept("op", ",")) b = expectBindName("имя переменной").v;
+          expectW("из");
+          const list = expr();
+          let cond = null;
+          if (accept("kw", "если")) cond = expr();
           skipNl();
-          if (!accept("op", ",")) break;
+          expect("op", "]", "«]»");
+          return { k: "listcomp", value: first, name: a, name2: b, list, cond, ...P };
+        }
+        items.push(first);
+        if (accept("op", ",")) {
           skipNl();
+          while (!is("op", "]")) {
+            items.push(expr());
+            skipNl();
+            if (!accept("op", ",")) break;
+            skipNl();
+          }
         }
         expect("op", "]", "«]»");
         return { k: "list", items, ...P };
@@ -912,21 +1170,65 @@
       if (accept("op", "{")) {
         const entries = [];
         skipNl();
-        while (!is("op", "}")) {
-          let key;
-          const kt = peek();
-          if ((kt.t === "id" || kt.t === "kw") && peek(1).t === "op" && peek(1).v === ":") { next(); key = { k: "str", v: kt.v, ...pos(kt) }; }
-          else key = expr();
-          expect("op", ":");
+        if (is("op", "}")) { next(); return { k: "dict", entries, ...P }; }
+        let firstKey = null, firstVal = null, firstExpr = null, firstKeyIdent = false;
+        const kt = peek();
+        if ((kt.t === "id" || kt.t === "kw") && peek(1).t === "op" && peek(1).v === ":") { next(); firstKey = { k: "str", v: kt.v, ...pos(kt) }; firstKeyIdent = true; expect("op", ":"); skipNl(); firstVal = expr(); }
+        else {
+          const e0 = expr();
           skipNl();
-          entries.push({ key, value: expr() });
+          if (accept("op", ":")) { firstKey = e0; skipNl(); firstVal = expr(); }
+          else firstExpr = e0;
+        }
+        skipNl();
+        if (accept("kw", "для")) {
+          expectW("каждого");
+          const a = expectBindName("имя переменной").v;
+          let b = null;
+          if (accept("op", ",")) b = expectBindName("имя переменной").v;
+          expectW("из");
+          const list = expr();
+          let cond = null;
+          if (accept("kw", "если")) cond = expr();
           skipNl();
-          if (!accept("op", ",")) break;
+          expect("op", "}", "«}»");
+          if (firstKey) return { k: "dictcomp", key: firstKeyIdent ? { k: "name", name: firstKey.v, line: firstKey.line, col: firstKey.col, file: firstKey.file } : firstKey, value: firstVal, name: a, name2: b, list, cond, ...P };
+          return { k: "setcomp", value: firstExpr, name: a, name2: b, list, cond, ...P };
+        }
+        if (firstKey) {
+          entries.push({ key: firstKey, value: firstVal });
+          if (accept("op", ",")) {
+            skipNl();
+            while (!is("op", "}")) {
+              let key;
+              const kt2 = peek();
+              if ((kt2.t === "id" || kt2.t === "kw") && peek(1).t === "op" && peek(1).v === ":") { next(); key = { k: "str", v: kt2.v, ...pos(kt2) }; }
+              else key = expr();
+              expect("op", ":");
+              skipNl();
+              entries.push({ key, value: expr() });
+              skipNl();
+              if (!accept("op", ",")) break;
+              skipNl();
+            }
+          }
+          expect("op", "}", "«}»");
+          return { k: "dict", entries, ...P };
+        }
+        const items = [firstExpr];
+        if (accept("op", ",")) {
           skipNl();
+          while (!is("op", "}")) {
+            items.push(expr());
+            skipNl();
+            if (!accept("op", ",")) break;
+            skipNl();
+          }
         }
         expect("op", "}", "«}»");
-        return { k: "dict", entries, ...P };
+        return { k: "setlit", items, ...P };
       }
+      if (accept("kw", "в")) return { k: "name", name: "в", ...P };
       if (tok.t === "kw") fail("здесь не может стоять слово «" + tok.v + "»", tok);
       fail("ожидалось значение, а встретилось " + describe(tok));
     }
@@ -960,6 +1262,7 @@
     "бит_и": [2, 2], "бит_или": [2, 2], "бит_искл": [2, 2], "бит_не": [1, 1], "сдвиг_влево": [2, 2], "сдвиг_вправо": [2, 2], "сдвиг_вправо_без_знака": [2, 2],
     "в_json": [1, 2], "из_json": [1, 1], "нумеруй": [1, 1], "попарно": [2, 2], "список_файлов": [1, 1], "удали_файл": [1, 1], "создай_папку": [1, 1],
     "тангенс": [1, 1], "арктангенс": [1, 2], "экспонента": [1, 1], "бесконечность": null,
+    "аргументы": null, "argv": null, "размер": [1, 1], "sizeof": [1, 1], "формат": [1, 99], "printf": [1, 99], "открой": [1, 2],
   };
   const BUILTIN_CLASSES = ["Ошибка"];
   const TYPES = ["число", "строка", "логическое", "список", "словарь", "функция", "ничего", "любое", "целое", "множество"];
@@ -971,7 +1274,7 @@
     const file = opts.file;
     const err = (msg, n) => { throw new CompileError(msg, n.line, n.col, n.file || file); };
     const scopes = [];
-    const ctx = { fn: 0, loop: 0, cls: null, method: false };
+    const ctx = { fn: 0, loop: 0, cls: null, method: false, labels: new Map(), gotos: [], labelDepth: 0, switchExpr: 0 };
     const push = () => scopes.push(new Map());
     const pop = () => scopes.pop();
     const lookup = (name) => { for (let i = scopes.length - 1; i >= 0; i--) if (scopes[i].has(name)) return scopes[i].get(name); return null; };
@@ -988,7 +1291,10 @@
           for (const m of s.methods.concat(s.fields)) { if (m.priv) { if (!privNames.has(m.name)) privNames.set(m.name, new Set()); privNames.get(m.name).add(s.name); } else pubNames.add(m.name); }
         }
         for (const k of ["body", "then", "otherwise", "handler", "fin"]) if (Array.isArray(s[k])) collect(s[k]);
-        if (s.k === "class") s.methods.forEach((m) => collect(m.body));
+        if (s.handlers) s.handlers.forEach((h) => collect(h.body || []));
+        if (s.cases) s.cases.forEach((c) => collect(c.body || []));
+        if (s.k === "class" || s.k === "anonclass") s.methods.forEach((m) => collect(m.body || []));
+        if (s.k === "module" || s.k === "thread" || s.k === "with") collect(s.body || []);
       }
     })(program.body);
     const privOk = (name) => {
@@ -1021,8 +1327,17 @@
     const litType = (e) => ({ num: "число", str: "строка", tmpl: "строка", bool: "логическое", list: "список", dict: "словарь", lambda: "функция" })[e.k];
 
     function body(list) { hoist(list); for (const s of list) stmt(s); }
-    function blockScope(list) { push(); body(list); pop(); }
+    function blockScope(list) { ctx.labelDepth++; push(); body(list); pop(); ctx.labelDepth--; }
     function loop(f) { ctx.loop++; f(); ctx.loop--; }
+    function checkGotos(owner) {
+      for (const g of ctx.gotos) if (!ctx.labels.has(g.name)) err("нет метки «" + g.name + "». Поставьте её так: метка " + g.name, g);
+      owner.hasGoto = ctx.labels.size > 0 || ctx.gotos.length > 0;
+    }
+    function withLabels(owner, f) {
+      const saved = { labels: ctx.labels, gotos: ctx.gotos, labelDepth: ctx.labelDepth };
+      ctx.labels = new Map(); ctx.gotos = []; ctx.labelDepth = 0;
+      try { f(); checkGotos(owner); } finally { ctx.labels = saved.labels; ctx.gotos = saved.gotos; ctx.labelDepth = saved.labelDepth; }
+    }
 
     function stmt(s) {
       switch (s.k) {
@@ -1070,15 +1385,53 @@
         case "foreach":
           expr(s.list);
           if (s.name2 && s.name2 === s.name) err("имена в «для каждого» не должны совпадать", s);
-          loop(() => { push(); declare(s.name, { kind: "let" }, s); if (s.name2) declare(s.name2, { kind: "let" }, s); body(s.body); pop(); });
+          loop(() => { ctx.labelDepth++; push(); declare(s.name, { kind: "let" }, s); if (s.name2) declare(s.name2, { kind: "let" }, s); body(s.body); pop(); ctx.labelDepth--; });
           return;
         case "forrange":
           expr(s.from); expr(s.to);
           if (s.step) { expr(s.step); if (s.step.k === "num" && s.step.v === 0) err("шаг цикла не может быть нулём", s.step); }
-          loop(() => { push(); declare(s.name, { kind: "let" }, s); body(s.body); pop(); });
+          loop(() => { ctx.labelDepth++; push(); declare(s.name, { kind: "let" }, s); body(s.body); pop(); ctx.labelDepth--; });
           return;
         case "func": func(s, s.method); return;
-        case "return": if (!ctx.fn) err("«верни» можно писать только внутри функции", s); if (s.value) expr(s.value); return;
+        case "return": if (!ctx.fn && !ctx.switchExpr) err("«верни» можно писать только внутри функции", s); if (s.value) expr(s.value); return;
+        case "label":
+          if (ctx.labelDepth) err("метку «" + s.name + "» можно ставить только в теле программы или функции, не внутри «если», «пока» и других блоков", s);
+          if (ctx.labels.has(s.name)) err("метка «" + s.name + "» уже есть", s);
+          ctx.labels.set(s.name, s);
+          return;
+        case "goto": ctx.gotos.push(s); return;
+        case "thread":
+          withLabels(s, () => {
+            const savedFn = ctx.fn, savedLoop = ctx.loop;
+            ctx.fn = 1; ctx.loop = 0;
+            push(); body(s.body); pop();
+            ctx.fn = savedFn; ctx.loop = savedLoop;
+          });
+          return;
+        case "with":
+          expr(s.value);
+          ctx.labelDepth++;
+          push(); declare(s.name, { kind: "let" }, s); body(s.body); pop();
+          ctx.labelDepth--;
+          return;
+        case "module": {
+          withLabels(s, () => {
+            push();
+            body(s.body);
+            s.exports = [];
+            for (const [n, info] of scopes[scopes.length - 1]) if (["func", "class", "let", "const", "forever", "lazy", "iface"].includes(info.kind)) s.exports.push(n);
+            pop();
+          });
+          if (s.alias) declare(s.alias, { kind: "const" }, s);
+          if (s.names) {
+            const have = new Set(s.exports);
+            for (const n of s.names) {
+              if (!have.has(n.name)) err("в модуле «" + (s.path || "") + "» нет имени «" + n.name + "»", s);
+              declare(n.as, { kind: "let" }, s);
+            }
+          }
+          return;
+        }
         case "break": if (!ctx.loop) err("«стоп» можно писать только внутри цикла", s); return;
         case "continue": if (!ctx.loop) err("«дальше» можно писать только внутри цикла", s); return;
         case "throw": expr(s.value); return;
@@ -1090,7 +1443,7 @@
               if (!TYPES.includes(h.type) && !(ti && (ti.kind === "class" || ti.kind === "iface"))) err("неизвестный тип ошибки «" + h.type + "»." + suggest(h.type, TYPES.concat(classNames())), h);
               markBuiltin(h.type, ti);
             }
-            push(); if (h.errName) declare(h.errName, { kind: "let" }, h); body(h.body); pop();
+            ctx.labelDepth++; push(); if (h.errName) declare(h.errName, { kind: "let" }, h); body(h.body); pop(); ctx.labelDepth--;
           }
           if (s.fin) blockScope(s.fin);
           return;
@@ -1115,7 +1468,11 @@
           }
           for (const i of s.ifaces || []) { const ii = lookup(i); if (!ii || ii.kind !== "iface") err("интерфейс «" + i + "» не найден." + suggest(i, allNames().filter((x) => lookup(x).kind === "iface")), s); }
           const names = new Set();
-          for (const m of s.methods) { if (names.has((m.static ? "общая " : "") + m.name)) err("метод «" + m.name + "» объявлен дважды", m); names.add((m.static ? "общая " : "") + m.name); }
+          for (const m of s.methods) {
+            const key = (m.static ? "общая " : "") + m.name + (m.getter ? "#get" : m.setter ? "#set" : m.name === "создать" ? "#c" + m.params.length : "");
+            if (names.has(key)) err("метод «" + m.name + "» объявлен дважды", m);
+            names.add(key);
+          }
           const saved = { ...ctx };
           ctx.cls = s;
           ctx.method = true;
@@ -1136,11 +1493,13 @@
       const saved = { ...ctx };
       ctx.fn = 1; ctx.loop = 0;
       if (!isMethod && f.name) { ctx.cls = null; ctx.method = false; }
-      push();
-      for (const q of f.params) { checkType(q.type, q); if (q.def) expr(q.def); declare(q.name, { kind: "let", type: q.type }, q); }
-      if (f.ret) checkType(f.ret, f);
-      body(f.body);
-      pop();
+      withLabels(f, () => {
+        push();
+        for (const q of f.params) { checkType(q.type, q); if (q.def) expr(q.def); declare(q.name, { kind: "let", type: q.type }, q); }
+        if (f.ret) checkType(f.ret, f);
+        body(f.body);
+        pop();
+      });
       Object.assign(ctx, saved);
     }
     function checkArity(info, n, count, name) {
@@ -1172,6 +1531,12 @@
         case "mcall": expr(e.obj); if (e.obj.k !== "this" && !privOk(e.name)) err("«" + e.name + "» — скрытая функция класса «" + [...privNames.get(e.name)].join("», «") + "», снаружи класса её вызывать нельзя", e); e.args.forEach(expr); return;
         case "new": { const info = lookup(e.name); if (!info || info.kind !== "class") err("класс «" + e.name + "» не найден." + suggest(e.name, classNames()), e); markBuiltin(e.name, info); e.args.forEach(expr); return; }
         case "call":
+          if (e.fn.k === "this") {
+            if (!ctx.cls) err("«это(...)» можно писать только внутри функций класса", e);
+            e.thisCtor = true;
+            e.args.forEach(expr);
+            return;
+          }
           if (e.fn.k === "name") { const info = resolve(e.fn); checkArity(info, e, e.args.length, e.fn.name); }
           else expr(e.fn);
           e.args.forEach(expr);
@@ -1188,9 +1553,85 @@
         case "lambda": {
           const saved = { ...ctx };
           ctx.fn = 1; ctx.loop = 0;
+          withLabels(e, () => {
+            push();
+            for (const q of e.params) { checkType(q.type, q); if (q.def) expr(q.def); declare(q.name, { kind: "let", type: q.type }, q); }
+            if (e.body) body(e.body); else expr(e.value);
+            pop();
+          });
+          Object.assign(ctx, saved);
+          return;
+        }
+        case "walrus": {
+          const info = lookup(e.name);
+          if (!info) err("переменная «" + e.name + "» не объявлена. Для «:=» сначала напиши: пусть " + e.name + " = ничего", e);
+          if (info.kind === "const") err("нельзя изменить константу «" + e.name + "»", e);
+          if (info.kind === "forever") err("нельзя изменить «" + e.name + "»: она объявлена как «пусть навсегда»", e);
+          if (info.kind === "lazy") err("нельзя изменить ленивую переменную «" + e.name + "»", e);
+          if (info.kind === "func" || info.kind === "builtin" || info.kind === "class" || info.kind === "iface") err("нельзя присвоить значение «" + e.name + "»: это функция или класс", e);
+          expr(e.value);
+          return;
+        }
+        case "refof": {
+          if (!["name", "index", "member", "deref"].includes(e.target.k)) err("ссылку можно взять только на переменную, элемент списка или поле", e);
+          if (e.target.k === "name") {
+            const info = lookup(e.target.name);
+            if (!info) err("переменная «" + e.target.name + "» не объявлена. Объяви её так: пусть " + e.target.name + " = …", e.target);
+            if (info.kind === "const" || info.kind === "forever" || info.kind === "lazy") err("нельзя взять ссылку на константу или неизменяемую переменную «" + e.target.name + "»", e);
+            e.target.ref = "user";
+          } else expr(e.target);
+          return;
+        }
+        case "deref": expr(e.e); return;
+        case "await": expr(e.e); return;
+        case "methodref": expr(e.obj); return;
+        case "thread": stmt(e); return;
+        case "setlit": e.items.forEach(expr); return;
+        case "listcomp": case "setcomp": case "dictcomp": {
+          expr(e.list);
           push();
-          for (const q of e.params) { checkType(q.type, q); if (q.def) expr(q.def); declare(q.name, { kind: "let", type: q.type }, q); }
-          if (e.body) body(e.body); else expr(e.value);
+          declare(e.name, { kind: "let" }, e);
+          if (e.name2) declare(e.name2, { kind: "let" }, e);
+          if (e.cond) expr(e.cond);
+          if (e.key) expr(e.key);
+          expr(e.value);
+          pop();
+          return;
+        }
+        case "switchexpr": {
+          ctx.switchExpr++;
+          expr(e.subject);
+          for (const c of e.cases) {
+            push();
+            if (c.values) c.values.forEach(expr);
+            if (c.bind) declare(c.bind, { kind: "let" }, c);
+            if (c.guard) expr(c.guard);
+            if (c.value) expr(c.value);
+            if (c.body) body(c.body);
+            pop();
+          }
+          if (e.def) {
+            if (Array.isArray(e.def)) body(e.def);
+            else expr(e.def);
+          }
+          ctx.switchExpr--;
+          return;
+        }
+        case "anonclass": {
+          if (e.parent) {
+            const pi = lookup(e.parent);
+            if (!pi || (pi.kind !== "class" && pi.kind !== "iface")) err("класс или интерфейс «" + e.parent + "» не найден." + suggest(e.parent, classNames()), e);
+            markBuiltin(e.parent, pi);
+            e.parentKind = pi.kind;
+          }
+          e.args.forEach(expr);
+          const saved = { ...ctx };
+          ctx.cls = { name: "анонимный", parent: e.parentKind === "class" ? e.parent : null };
+          ctx.method = true;
+          ctx.fn = 0;
+          push();
+          for (const f of e.fields) if (f.value) expr(f.value);
+          for (const m of e.methods) func(m, true);
           pop();
           Object.assign(ctx, saved);
           return;
@@ -1203,13 +1644,14 @@
     for (const k of BUILTIN_CLASSES) scopes[0].set(k, { kind: "class", builtinCls: true });
     push();
     program.globals = [];
-    body(program.body);
+    withLabels(program, () => body(program.body));
     program.builtinClasses = [...builtinUsed];
     return program;
   }
 
-  function resolveImports(program, opts, seen) {
+  function resolveImports(program, opts, seen, cache) {
     seen = seen || new Set([opts.file || ""]);
+    cache = cache || new Map();
     const out = [];
     for (const s of program.body) {
       if (s.k !== "import") { out.push(s); continue; }
@@ -1218,10 +1660,21 @@
       let res;
       try { res = opts.resolve(s.path, where); } catch (e) { throw new CompileError("не удалось подключить файл «" + s.path + "»", s.line, s.col, where); }
       if (!res) throw new CompileError("файл «" + s.path + "» не найден", s.line, s.col, where);
-      if (seen.has(res.id)) continue;
-      seen.add(res.id);
       const name = res.name || s.path;
-      out.push(...resolveImports(parse(res.source, name, opts.warn), { ...opts, file: name }, seen).body);
+      let inner;
+      if (cache.has(res.id)) inner = cache.get(res.id);
+      else if (seen.has(res.id)) inner = { k: "program", body: [] };
+      else {
+        seen.add(res.id);
+        inner = resolveImports(parse(res.source, name, opts.warn), { ...opts, file: name }, seen, cache);
+        cache.set(res.id, inner);
+      }
+      if (s.alias || s.names) out.push({ k: "module", alias: s.alias || null, names: s.names || null, body: inner.body, path: s.path, share: res.id, line: s.line, col: s.col, file: s.file });
+      else {
+        if (cache.get(res.id + "#flat")) continue;
+        cache.set(res.id + "#flat", true);
+        out.push(...inner.body);
+      }
     }
     return { k: "program", body: out };
   }
@@ -1255,14 +1708,89 @@
     function stmts(list) { for (const s of list) stmt(s); }
     function blockOf(list) { ind++; stmts(list); ind--; }
     function loopBody(list) { ind++; guard(); stmts(list); ind--; }
+    let gotoCtx = null;
+    const moduleShares = new Map();
+    function capture(f) {
+      const saved = out, savedInd = ind;
+      out = [];
+      ind = 0;
+      f();
+      const lines = out;
+      out = saved;
+      ind = savedInd;
+      return lines;
+    }
+    function emitGotoBody(list, owner) {
+      if (!owner || !owner.hasGoto) { stmts(list); return; }
+      const preludeK = new Set(["func", "class", "struct", "enum", "iface", "module"]);
+      const prelude = list.filter((s) => preludeK.has(s.k));
+      const hoisted = [];
+      const seen = new Set();
+      const take = (n) => { if (!seen.has(n)) { seen.add(n); hoisted.push(n); } };
+      for (const s of list) {
+        if (s.k === "let" && s.kind !== "global") take(s.name);
+        if (s.k === "multilet") s.names.forEach(take);
+      }
+      stmts(prelude);
+      for (const n of hoisted) emit("let " + vname(n) + " = null;");
+      const id = ++uid;
+      const lab = "__go" + id, pc = "__pc" + id;
+      const labels = new Map();
+      let n = 1;
+      for (const s of list) if (s.k === "label") { labels.set(s.name, n++); }
+      const saved = gotoCtx;
+      gotoCtx = { pc, lab, labels };
+      emit("let " + pc + " = 0;");
+      emit(lab + ": for (;;) { switch (" + pc + ") {");
+      emit("case 0:");
+      try {
+        for (const s of list) {
+          if (s.k === "label") { emit("case " + labels.get(s.name) + ":"); continue; }
+          if (preludeK.has(s.k)) continue;
+          stmt(s);
+        }
+        emit("break " + lab + ";");
+        emit("default: break " + lab + ";");
+        emit("} }");
+      } finally { gotoCtx = saved; }
+    }
+    function emitClassLike(s, name) {
+      const ctors = (s.methods || []).filter((m) => m.name === "создать" && !m.static && !m.getter && !m.setter && !m.abstract);
+      emit("class " + name + (s.parent && s.parentKind !== "iface" ? " extends " + vname(s.parent) : "") + " {");
+      ind++;
+      if (!(s.parent && s.parentKind !== "iface")) emit("constructor(...a) { this.__init(); if (typeof this[" + jsStr("создать") + "] === \"function\") this[" + jsStr("создать") + "](...a); else if (a.length) __R.fail(\"у класса «\" + this.__cls + \"» нет функции «создать», поэтому ему нельзя передавать значения\"); }");
+      emit("__init() {" + (s.parent && s.parentKind !== "iface" ? " super.__init();" : "") + (s.fields || []).filter((f) => !f.static).map((f) => " this[" + jsStr(f.name) + "] = " + (f.value ? expr(f.value) : "null") + ";").join("") + " }");
+      emit("get __cls() { return " + jsStr(s.name || "безымянный") + "; }");
+      const statics = (s.fields || []).filter((f) => f.static).map((f) => f.name).concat((s.methods || []).filter((m) => m.static).map((m) => m.name));
+      if (statics.length) emit("static get __statics() { return (super.__statics || []).concat(" + JSON.stringify(statics) + "); }");
+      for (const f of s.fields || []) if (f.static) emit("static [" + jsStr(f.name) + "] = " + (f.value ? expr(f.value) : "null") + ";");
+      (s.methods || []).forEach((m) => {
+        if (m.abstract) { emit("[" + jsStr(m.name) + "]() { __R.fail(" + jsStr("функция «" + m.name + "» класса «" + (s.name || "безымянный") + "» абстрактная: её нужно написать в классе-наследнике") + "); }"); return; }
+        const ctorIdx = ctors.length > 1 ? ctors.indexOf(m) : -1;
+        const mname = ctorIdx >= 0 ? "создать#" + ctorIdx : m.name;
+        emit((m.static ? "static " : "") + (m.getter ? "get " : m.setter ? "set " : "") + "[" + jsStr(mname) + "](" + paramList(m.params) + ") {");
+        ind++; funcBody(m); ind--; emit("}");
+      });
+      if (ctors.length > 1) {
+        emit("[" + jsStr("создать") + "](...a) { return this[__R.pickCtor([" + ctors.map((m, i) => "[" + i + ", " + m.params.filter((q) => !q.def).length + ", " + m.params.length + "]").join(", ") + "], a.length)](...a); }");
+      }
+      ind--;
+      emit("}");
+      const ifaces = (s.ifaces || []).slice();
+      if (s.parent && s.parentKind === "iface") ifaces.push(s.parent);
+      if (ifaces.length) emit("__R.implements(" + name + ", [" + ifaces.map(vname).join(", ") + "]);");
+    }
     function stmt(s) {
       switch (s.k) {
         case "let": {
           let v = expr(s.value);
           if (s.type) v = typed(v, s.type, s.name);
           if (s.kind === "forever") v = "__R.forever(" + v + ")";
-          if (s.kind === "lazy") { emit(L(s) + "const " + vname(s.name) + " = __R.lazy(() => " + v + ");"); return; }
-          if (s.kind === "global") { emit(L(s) + vname(s.name) + " = " + v + ";"); return; }
+          if (s.kind === "lazy") {
+            emit(L(s) + (gotoCtx ? "" : "const ") + vname(s.name) + " = __R.lazy(() => " + v + ");");
+            return;
+          }
+          if (s.kind === "global" || gotoCtx) { emit(L(s) + vname(s.name) + " = " + v + ";"); return; }
           emit(L(s) + (s.kind === "let" ? "let " : "const ") + vname(s.name) + " = " + v + ";");
           return;
         }
@@ -1270,7 +1798,8 @@
           const t = "__t" + (++uid);
           let v = "__R.unpack(" + expr(s.value) + ", " + s.names.length + ")";
           emit(L(s) + "const " + t + " = " + v + ";");
-          emit((s.kind === "let" ? "let " : "const ") + s.names.map((n, i) => vname(n) + " = " + (s.kind === "forever" ? "__R.forever(" + t + "[" + i + "])" : t + "[" + i + "]")).join(", ") + ";");
+          const parts = s.names.map((n, i) => vname(n) + " = " + (s.kind === "forever" ? "__R.forever(" + t + "[" + i + "])" : t + "[" + i + "]"));
+          emit((gotoCtx ? "" : (s.kind === "let" ? "let " : "const ")) + parts.join(gotoCtx ? "; " : ", ") + ";");
           return;
         }
         case "multiassign": {
@@ -1292,6 +1821,13 @@
             let v = s.op === "=" ? expr(s.value) : "__R." + ASSIGN_OPS[s.op] + "(" + vname(t.name) + ", " + expr(s.value) + ")";
             if (s.checkType) v = typed(v, s.checkType, t.name);
             emit(L(s) + vname(t.name) + " = " + v + ";");
+            return;
+          }
+          if (t.k === "deref") {
+            const r = expr(t.e);
+            const rhs = s.value.js || expr(s.value);
+            if (s.op === "=") emit(L(s) + "__R.derefSet(" + r + ", " + rhs + ");");
+            else emit(L(s) + "{ const __r = " + r + "; __R.derefSet(__r, __R." + ASSIGN_OPS[s.op] + "(__R.deref(__r), " + rhs + ")); }");
             return;
           }
           const id = ++uid, o = "__o" + id, k = "__k" + id;
@@ -1393,22 +1929,42 @@
           return;
         }
         case "class": {
-          emit(L(s) + "class " + vname(s.name) + (s.parent ? " extends " + vname(s.parent) : "") + " {");
-          ind++;
-          if (!s.parent) emit("constructor(...a) { this.__init(); if (typeof this[\"создать\"] === \"function\") this[\"создать\"](...a); else if (a.length) __R.fail(\"у класса «\" + this.__cls + \"» нет функции «создать», поэтому ему нельзя передавать значения\"); }");
-          emit("__init() {" + (s.parent ? " super.__init();" : "") + s.fields.filter((f) => !f.static).map((f) => " this[" + jsStr(f.name) + "] = " + (f.value ? expr(f.value) : "null") + ";").join("") + " }");
-          emit("get __cls() { return " + jsStr(s.name) + "; }");
-          const statics = s.fields.filter((f) => f.static).map((f) => f.name).concat(s.methods.filter((m) => m.static).map((m) => m.name));
-          if (statics.length) emit("static get __statics() { return (super.__statics || []).concat(" + JSON.stringify(statics) + "); }");
-          for (const f of s.fields) if (f.static) emit("static [" + jsStr(f.name) + "] = " + (f.value ? expr(f.value) : "null") + ";");
-          for (const m of s.methods) {
-            if (m.abstract) { emit("[" + jsStr(m.name) + "]() { __R.fail(" + jsStr("функция «" + m.name + "» класса «" + s.name + "» абстрактная: её нужно написать в классе-наследнике") + "); }"); continue; }
-            emit((m.static ? "static " : "") + (m.getter ? "get " : "") + "[" + jsStr(m.name) + "](" + paramList(m.params) + ") {");
-            ind++; funcBody(m); ind--; emit("}");
+          emit(L(s));
+          emitClassLike(s, vname(s.name));
+          return;
+        }
+        case "label": return;
+        case "goto": {
+          if (!gotoCtx || !gotoCtx.labels.has(s.name)) emit(L(s) + "__R.fail(" + jsStr("нет метки «" + s.name + "»") + ");");
+          else emit(L(s) + gotoCtx.pc + " = " + gotoCtx.labels.get(s.name) + "; continue " + gotoCtx.lab + ";");
+          return;
+        }
+        case "thread":
+          emit(L(s) + expr(s) + ";");
+          return;
+        case "with": {
+          const id = ++uid, m = "__m" + id;
+          emit(L(s) + "{ const " + m + " = " + expr(s.value) + "; let " + vname(s.name) + "; try { " + vname(s.name) + " = __R.enter(" + m + ");");
+          blockOf(s.body);
+          emit("} finally { __R.exit(" + m + "); } }");
+          return;
+        }
+        case "module": {
+          let tmp = s.share && moduleShares.has(s.share) ? moduleShares.get(s.share) : null;
+          if (!tmp) {
+            tmp = s.alias ? vname(s.alias) : "__mod" + (++uid);
+            const exp = (s.exports || []).map((n) => "[" + jsStr(n) + ", " + vname(n) + "]").join(", ");
+            emit(L(s) + "const " + tmp + " = (() => {");
+            ind++;
+            emitGotoBody(s.body, s);
+            emit("return __R.dict([" + exp + "]);");
+            ind--;
+            emit("})();");
+            if (s.share) moduleShares.set(s.share, tmp);
+          } else if (s.alias) emit(L(s) + "const " + vname(s.alias) + " = " + tmp + ";");
+          if (s.names) {
+            for (const n of s.names) emit("let " + vname(n.as) + " = __R.get(" + tmp + ", " + jsStr(n.name) + ");");
           }
-          ind--;
-          emit("}");
-          if (s.ifaces && s.ifaces.length) emit("__R.implements(" + vname(s.name) + ", [" + s.ifaces.map(vname).join(", ") + "]);");
           return;
         }
         case "struct":
@@ -1427,13 +1983,20 @@
         if (!q.def) emit("if (" + vname(q.name) + " === undefined) __R.missing(" + jsStr(q.name) + ");");
         if (q.type) emit(vname(q.name) + " = " + typed(vname(q.name), q.type, q.name) + ";");
       }
-      if (f.ret) {
-        const inner = "__f" + (++uid);
-        emit("const " + inner + " = () => {");
-        ind++; stmts(f.body); emit("return null;"); ind--;
-        emit("};");
-        emit("return " + typed(inner + "()", f.ret, "результат функции «" + (f.name || "") + "»") + ";");
-      } else { stmts(f.body); if (!f.body.length || f.body[f.body.length - 1].k !== "return") emit("return null;"); }
+      const runTyped = () => {
+        if (f.ret) {
+          const inner = "__f" + (++uid);
+          emit("const " + inner + " = () => {");
+          ind++; emitGotoBody(f.body, f); emit("return null;"); ind--;
+          emit("};");
+          emit("return " + typed(inner + "()", f.ret, "результат функции «" + (f.name || "") + "»") + ";");
+        } else { emitGotoBody(f.body, f); if (!f.body.length || f.body[f.body.length - 1].k !== "return") emit("return null;"); }
+      };
+      if (f.async) {
+        emit("return __R.task(() => {");
+        ind++; runTyped(); ind--;
+        emit("});");
+      } else runTyped();
     }
     function expr(e) {
       switch (e.k) {
@@ -1459,6 +2022,7 @@
         case "mcall": return (e.safe ? "__R.scall(" : "__R.call(") + expr(e.obj) + ", " + jsStr(e.name) + ", [" + args(e.args) + "])";
         case "new": return "new " + vname(e.name) + "(" + args(e.args) + ")";
         case "call":
+          if (e.thisCtor || e.fn.k === "this") return "this[" + jsStr("создать") + "](" + args(e.args) + ")";
           if (e.fn.k === "name" && e.fn.ref === "class") return "new " + vname(e.fn.name) + "(" + args(e.args) + ")";
           if (e.fn.k === "name" && e.fn.ref === "builtin") return "__R.b[" + jsStr(e.fn.name) + "](" + args(e.args) + ")";
           if (e.fn.k === "name") return "__R.fn(" + vname(e.fn.name) + (e.fn.lazy ? "()" : "") + ", " + jsStr(e.fn.name) + ")(" + args(e.args) + ")";
@@ -1473,21 +2037,71 @@
           return "__R.call(" + expr(e.left) + ", " + jsStr(e.name) + ", [" + args(e.args) + "])";
         }
         case "lambda": {
-          const saved = out, savedInd = ind;
-          out = [];
-          ind = 0;
-          funcBody({ params: e.params, body: e.body || [{ k: "return", value: e.value }], ret: null });
-          const lines = out;
-          out = saved;
-          ind = savedInd;
+          const lines = capture(() => funcBody({ params: e.params, body: e.body || [{ k: "return", value: e.value }], ret: null, hasGoto: e.hasGoto }));
           return "((" + paramList(e.params) + ") => { " + lines.map((x) => x.trim()).join(" ") + " })";
+        }
+        case "walrus": return "(" + vname(e.name) + " = " + expr(e.value) + ")";
+        case "refof": {
+          const t = e.target;
+          if (t.k === "deref") return expr(t.e);
+          if (t.k === "name") return "__R.ref(() => " + vname(t.name) + ", (__v) => { " + vname(t.name) + " = __v; })";
+          if (t.k === "index") return "(() => { const __o = " + expr(t.obj) + ", __k = " + expr(t.index) + "; return __R.ref(() => __R.idx(__o, __k), (__v) => { __R.setIdx(__o, __k, __v); }); })()";
+          if (t.k === "member") return "(() => { const __o = " + expr(t.obj) + "; return __R.ref(() => __R.get(__o, " + jsStr(t.name) + "), (__v) => { __R.set(__o, " + jsStr(t.name) + ", __v); }); })()";
+          throw new CompileError("ссылку можно взять только на переменную, элемент списка или поле", e.line, e.col);
+        }
+        case "deref": return "__R.deref(" + expr(e.e) + ")";
+        case "await": return "__R.await(" + expr(e.e) + ")";
+        case "methodref": return "__R.methodRef(" + expr(e.obj) + ", " + jsStr(e.name) + ")";
+        case "thread": {
+          const lines = capture(() => { emitGotoBody(e.body, e); emit("return null;"); });
+          return "__R.task(() => { " + lines.map((x) => x.trim()).join(" ") + " })";
+        }
+        case "setlit": return "new Set([" + args(e.items) + "])";
+        case "listcomp": case "setcomp": case "dictcomp": {
+          const pair = !!e.name2;
+          const src = (pair ? "__R.pairs(" : "__R.iter(") + expr(e.list) + ")";
+          const bind = pair ? "([" + vname(e.name) + ", " + vname(e.name2) + "])" : "(" + vname(e.name) + ")";
+          const cond = e.cond ? "if (!__R.truth(" + expr(e.cond) + ")) return []; " : "";
+          if (e.k === "dictcomp") return "__R.dict(" + src + ".flatMap(" + bind + " => { " + cond + "return [[" + expr(e.key) + ", " + expr(e.value) + "]]; }))";
+          const mapped = src + ".flatMap(" + bind + " => { " + cond + "return [" + expr(e.value) + "]; })";
+          return e.k === "setcomp" ? "new Set(" + mapped + ")" : mapped;
+        }
+        case "switchexpr": {
+          const id = ++uid, sv = "__v" + id;
+          const lines = capture(() => {
+            emit("const " + sv + " = " + expr(e.subject) + ";");
+            for (const c of e.cases) {
+              if (c.bind) {
+                emit("{ let " + vname(c.bind) + " = " + sv + ";");
+                emit("if (" + (c.guard ? "__R.truth(" + expr(c.guard) + ")" : "true") + ") {");
+              } else {
+                const cond = (c.values || []).map((v) => "__R.eq(" + sv + ", " + expr(v) + ")").join(" || ") || "false";
+                emit("if ((" + cond + ")" + (c.guard ? " && __R.truth(" + expr(c.guard) + ")" : "") + ") {");
+              }
+              if (c.value) emit("return " + expr(c.value) + ";");
+              else { stmts(c.body || []); emit("return null;"); }
+              emit("}");
+              if (c.bind) emit("}");
+            }
+            if (e.def) {
+              if (Array.isArray(e.def)) { stmts(e.def); emit("return null;"); }
+              else emit("return " + expr(e.def) + ";");
+            }
+            emit("return null;");
+          });
+          return "(() => { " + lines.map((x) => x.trim()).join(" ") + " })()";
+        }
+        case "anonclass": {
+          const id = ++uid, cn = "__A" + id;
+          const lines = capture(() => { emitClassLike(e, cn); });
+          return "(() => { " + lines.map((x) => x.trim()).join(" ") + " return new " + cn + "(" + args(e.args) + "); })()";
         }
       }
       throw new CompileError("не умею переводить это выражение", e.line, e.col);
     }
     for (const b of program.builtinClasses || []) emit("const " + vname(b) + " = __R.builtinClass(" + jsStr(b) + ");");
     for (const g of program.globals || []) emit("let " + vname(g) + " = null;");
-    stmts(program.body);
+    emitGotoBody(program.body, program);
     return out.join("\n");
   }
 
@@ -1681,9 +2295,16 @@
     R.set = (o, k, v) => {
       if (o instanceof Map) { mutate(o); o.set(k, v); return; }
       if (isCls(o)) { if (!statics(o).includes(k) || typeof o[k] === "function") fail("у класса «" + o.prototype.__cls + "» нет общего поля «" + k + "»"); o[k] = v; return; }
-      if (isObj(o)) {
+      if (isObj(o) || (o && o.__ref)) {
         if (typeof k !== "string" || BAD_KEY.test(k) || INTERNAL.has(k)) fail("«" + k + "» — внутреннее имя, его нельзя менять");
         mutate(o);
+        let desc, p0 = o;
+        while (p0 && p0 !== Object.prototype) {
+          if (own(p0, k)) { desc = Object.getOwnPropertyDescriptor(p0, k); break; }
+          p0 = Object.getPrototypeOf(p0);
+        }
+        if (desc && desc.get && !desc.set) fail("свойство «" + k + "» только для чтения");
+        if (desc && typeof desc.set === "function") { o[k] = v; return; }
         Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true });
         return;
       }
@@ -1830,6 +2451,110 @@
       }
       return ErrCls;
     };
+    R.ref = (get, set) => Object.create(Object.prototype, {
+      __ref: { value: true },
+      __cls: { value: "ссылка" },
+      значение: { enumerable: true, get, set },
+    });
+    R.deref = (r) => {
+      if (!r || !r.__ref) fail("звёздочку «*» можно ставить только перед ссылкой (например: *п), а получено: " + typeName(r));
+      return r.значение;
+    };
+    R.derefSet = (r, v) => {
+      if (!r || !r.__ref) fail("присваивать через «*» можно только ссылке");
+      r.значение = v;
+      return v;
+    };
+    R.task = (f) => {
+      try { return { __task: true, __cls: "задача", done: true, value: f(), error: null }; }
+      catch (e) { return { __task: true, __cls: "задача", done: true, value: null, error: e }; }
+    };
+    R.await = (v) => {
+      if (v && v.__task) { if (v.error) throw v.error; return v.value; }
+      if (v && typeof v.then === "function") fail("«ждать» здесь выполняется сразу: настоящий промис подождать нельзя");
+      return v;
+    };
+    R.methodRef = (o, name) => {
+      if (o == null) fail("нельзя взять «::» у «ничего»");
+      return (...a) => R.call(o, name, a);
+    };
+    R.enter = (m) => {
+      if (m == null) fail("у «с … как» должно быть значение");
+      if (typeof m["войти"] === "function") return m["войти"]();
+      if (typeof m["открыть"] === "function") return m["открыть"]();
+      return m;
+    };
+    R.exit = (m) => {
+      if (m == null) return;
+      if (typeof m["выйти"] === "function") return m["выйти"]();
+      if (typeof m["закрыть"] === "function") return m["закрыть"]();
+      if (typeof m["закрой"] === "function") return m["закрой"]();
+    };
+    R.pickCtor = (list, n) => {
+      let loose = null;
+      for (const [id, mn, mx] of list) {
+        if (n >= mn && n <= mx) {
+          if (n === mx) return "создать#" + id;
+          if (loose == null) loose = id;
+        }
+      }
+      if (loose != null) return "создать#" + loose;
+      fail("нет функции «создать» для " + n + " значений");
+    };
+    R.sizeof = (v) => {
+      if (v === null || v === undefined) return 0;
+      if (typeof v === "boolean") return 1;
+      if (typeof v === "number") return 8;
+      if (typeof v === "string") return v.length * 2;
+      if (Array.isArray(v)) return v.length;
+      if (v instanceof Map || v instanceof Set) return v.size;
+      if (v && v.__ref) return 8;
+      if (isObj(v)) return objKeys(v).length;
+      return 0;
+    };
+    R.printf = (fmt, args) => {
+      if (typeof fmt !== "string") fail("шаблон для «формат» должен быть строкой, а получено: " + typeName(fmt));
+      let i = 0;
+      const out = fmt.replace(/%(-)?(\d+)?(?:\.(\d+))?([%sdifFgGxXoc])/g, (_, left, width, prec, spec) => {
+        if (spec === "%") return "%";
+        if (i >= args.length) fail("в шаблоне «формат» не хватает значений");
+        const a = args[i++];
+        let str;
+        if (spec === "s") str = show(a);
+        else if (spec === "c") str = typeof a === "number" ? String.fromCodePoint(a) : show(a).charAt(0);
+        else if (spec === "d" || spec === "i") str = String(Math.trunc(needNum(a, "число")));
+        else if (spec === "x" || spec === "X") { str = (Math.trunc(needNum(a, "число")) >>> 0).toString(16); if (spec === "X") str = str.toUpperCase(); }
+        else if (spec === "o") str = (Math.trunc(needNum(a, "число")) >>> 0).toString(8);
+        else if (spec === "f" || spec === "F" || spec === "g" || spec === "G") {
+          const n = needNum(a, "число");
+          const pr = prec !== undefined ? Number(prec) : (spec === "f" || spec === "F" ? 6 : undefined);
+          str = pr === undefined ? String(n) : n.toFixed(pr);
+          if (spec === "F" || spec === "G") str = str.toUpperCase();
+        } else str = show(a);
+        if (width) str = left ? str.padEnd(Number(width)) : str.padStart(Number(width));
+        return str;
+      });
+      if (i < args.length) fail("в «формат» передано слишком много значений: использовано " + i + ", а передано " + args.length);
+      return out;
+    };
+    const openFile = (path, mode) => {
+      needStr(path, "путь к файлу");
+      const md = mode === undefined || mode === null ? "читать" : show(mode);
+      if (md !== "читать" && md !== "r" && md !== "писать" && md !== "w" && md !== "дописать" && md !== "a") fail("режим файла «" + md + "»: напишите «читать», «писать» или «дописать»");
+      const file = {
+        __cls: "файл",
+        "путь": path,
+        "режим": md,
+        ["прочитай"]() { return fileOp("прочитать", path, (fs) => fs.readFileSync(path, "utf8")); },
+        ["запиши"](t) { return fileOp("записать", path, (fs) => { fs.writeFileSync(path, show(t), "utf8"); return null; }); },
+        ["допиши"](t) { return fileOp("дописать", path, (fs) => { fs.appendFileSync(path, show(t), "utf8"); return null; }); },
+        ["закрой"]() { return null; },
+        ["закрыть"]() { return null; },
+        ["войти"]() { return file; },
+        ["выйти"]() { return null; },
+      };
+      return file;
+    };
     const toNum = (v) => {
       if (typeof v === "number") return v;
       if (typeof v === "boolean") return v ? 1 : 0;
@@ -1909,6 +2634,13 @@
       "тангенс": (v) => Math.tan(needNum(v, "угол в радианах")),
       "арктангенс": (y, x) => (x === undefined ? Math.atan(needNum(y, "число")) : Math.atan2(needNum(y, "y"), needNum(x, "x"))),
       "экспонента": (v) => Math.exp(needNum(v, "степень")),
+      "аргументы": (io.args || []).slice(),
+      "argv": (io.args || []).slice(),
+      "размер": (v) => R.sizeof(v),
+      "sizeof": (v) => R.sizeof(v),
+      "формат": (fmt, ...a) => R.printf(fmt, a),
+      "printf": (fmt, ...a) => R.printf(fmt, a),
+      "открой": (path, mode) => openFile(path, mode),
     };
     return R;
   }
@@ -1935,7 +2667,7 @@
     io = io || {};
     const lines = [];
     const js = compile(src, { file: io.file, resolve: io.resolve, guard: io.guard !== false, warn: io.warn });
-    execute(js, { write: (s) => { lines.push(s); if (io.write) io.write(s); }, writeErr: (s) => { if (io.writeErr) io.writeErr(s); else { lines.push(s); if (io.write) io.write(s); } }, ask: io.ask || (() => ""), fs: io.fs, maxSteps: io.maxSteps });
+    execute(js, { write: (s) => { lines.push(s); if (io.write) io.write(s); }, writeErr: (s) => { if (io.writeErr) io.writeErr(s); else { lines.push(s); if (io.write) io.write(s); } }, ask: io.ask || (() => ""), fs: io.fs, maxSteps: io.maxSteps, args: io.args || [] });
     return lines;
   }
 
@@ -1958,7 +2690,8 @@
       "const __ask = " + nodeAsk.toString() + ";\n" +
       "const __fs = require(\"fs\");\n" +
       "if (process.platform === \"win32\") { try { require(\"child_process\").execFileSync(require(\"path\").join(process.env.SystemRoot || \"C:\\\\Windows\", \"System32\", \"chcp.com\"), [\"65001\"], { stdio: \"ignore\", windowsHide: true }); } catch (e) {} }\n" +
-      "const __R = __makeRuntime({ write: (s) => process.stdout.write(s + \"\\n\"), writeErr: (s) => process.stderr.write(s + \"\\n\"), ask: (q) => __ask(__fs, q), fs: __fs, maxSteps: Infinity });\n" +
+      "const __args = (function (argv) { const a = argv.slice(); if (a.length) a.shift(); if (a[0] && /\\.(js|cjs|mjs)$/i.test(a[0])) a.shift(); if (a[0] && /^(запустить|run|выполнить)$/i.test(a[0])) { a.shift(); if (a[0]) a.shift(); return a; } if (a[0] && /\\.pon$/i.test(a[0])) a.shift(); return a; })(process.argv);\n" +
+      "const __R = __makeRuntime({ write: (s) => process.stdout.write(s + \"\\n\"), writeErr: (s) => process.stderr.write(s + \"\\n\"), ask: (q) => __ask(__fs, q), fs: __fs, maxSteps: Infinity, args: __args });\n" +
       "try {\n" + js + "\n} catch (e) {\n" +
       "  if (e && e.isExit) { process.exitCode = e.code; } else {\n" +
       "  const m = e && e.isPon ? e.message : __R.explain(e);\n" +

@@ -54,7 +54,7 @@ const wantWords={
  python:[/класс ОшибкаВвода наследует Ошибка/,/бит_и\(6, 3\)/,/нацело\(7, 2\)/,/предупреди "в поток ошибок"/]
 };
 
-test('универсальный перевод Java/C#/C/Python в Понятный 2.4: проверка языка, стандартные слова и тот же вывод',async()=>{
+test('универсальный перевод Java/C#/C/Python в Понятный 2.5: проверка языка, стандартные слова и тот же вывод',async()=>{
  for(const [lang,file] of [['java','Demo.java'],['csharp','Demo.cs'],['c','demo.c'],['python','demo.py']]){
   const src=fs.readFileSync(path.join(SDIR,file),'utf8');
   const r=await TP.translate(src,lang);

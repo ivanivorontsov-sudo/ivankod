@@ -121,6 +121,15 @@
         if (isKw("else")) { next(); block(); note = "блок else у for не переведён"; }
         return { t: "for", targets, iter, body, line, note };
       }
+      if (isKw("async")) {
+        next();
+        if (!isKw("def")) fail("после «async» ожидалось «def»");
+        next();
+        const name = expect("name").v;
+        const params = paramsList();
+        if (accept("op", "->")) expr();
+        return { t: "def", name, params, body: block(), line, async: true };
+      }
       if (isKw("def")) {
         next();
         const name = expect("name").v;
@@ -151,8 +160,15 @@
         if (isKw("finally")) { next(); fin = block(); }
         return { t: "try", body, handlers, handler: handlers[0] ? handlers[0].body : null, errName: handlers[0] ? handlers[0].errName : null, fin, line, note };
       }
-      if (isKw("with")) { while (!isOp(":")) next(); block(); return { t: "note", text: "конструкция with не переводится", line }; }
-      if (isOp("@")) { next(); const d = expr(); expect("nl"); const s = statement(); if (d.t === "name" && (d.v === "staticmethod" || d.v === "classmethod") && s.t === "def") s.isStatic = true; else if (d.t === "name" && d.v === "property" && s.t === "def") s.isGetter = true; else if (d.t === "name" && d.v === "abstractmethod" && s.t === "def") s.isAbstract = true; else s.note = "декоратор не переведён"; return s; }
+      if (isKw("with")) {
+        next();
+        const value = expr();
+        let name = "_ресурс";
+        if (accept("name", "as")) name = expect("name").v;
+        const body = block();
+        return { t: "with", value, name, body, line, note: "конструкция with переведена как «с … как»; проверьте открытие файлов" };
+      }
+      if (isOp("@")) { next(); const d = expr(); expect("nl"); const s = statement(); if (d.t === "name" && (d.v === "staticmethod" || d.v === "classmethod") && s.t === "def") s.isStatic = true; else if (d.t === "name" && d.v === "property" && s.t === "def") s.isGetter = true; else if (d.t === "attr" && d.name === "setter" && s.t === "def") s.isSetter = true; else if (d.t === "name" && d.v === "abstractmethod" && s.t === "def") s.isAbstract = true; else s.note = "декоратор не переведён"; return s; }
       return simple();
     }
     function simple() {
@@ -213,7 +229,13 @@
         expect("op", ":");
         return { t: "lambda", params: ps, body: expr() };
       }
+      if (isKw("await")) { next(); return { t: "await", e: expr() }; }
       const a = orE();
+      if (isOp(":=")) {
+        next();
+        if (a.t !== "name") fail("слева от «:=» должно быть имя");
+        return { t: "walrus", name: a.v, value: expr() };
+      }
       if (isKw("if")) { next(); const test = orE(); expect("name", "else"); return { t: "cond", test, a, b: expr() }; }
       return a;
     }
@@ -320,7 +342,19 @@
             expect("op", "}");
             return { t: "call", fn: { t: "name", v: "set" }, args: [{ t: "list", items }], kw: [] };
           }
-          entries.push({ key: k, value: expr() });
+          const val = expr();
+          if (isKw("for")) {
+            next();
+            const targets = [];
+            do { targets.push(expect("name").v); } while (accept("op", ","));
+            expect("name", "in");
+            const iter = orE();
+            let cond = null;
+            if (isKw("if")) { next(); cond = orE(); }
+            expect("op", "}");
+            return { t: "dictcomp", key: k, value: val, targets, iter, cond };
+          }
+          entries.push({ key: k, value: val });
           if (!accept("op", ",")) break;
         }
         expect("op", "}");
@@ -415,10 +449,13 @@
           return { t: "for", targets: [l.name], iter: E(n.right), body: B(n.body), line };
         }
         case "ForInStatement": { const l = n.left.type === "VariableDeclaration" ? n.left.declarations[0].id : n.left; return { t: "for", targets: [l.name], iter: E(n.right), body: B(n.body), line }; }
-        case "FunctionDeclaration": return { t: "def", name: n.id.name, params: params(n.params), body: B(n.body), line };
+        case "FunctionDeclaration": return { t: "def", name: n.id.name, params: params(n.params), body: B(n.body), line, async: !!n.async };
         case "ReturnStatement": return { t: "return", value: n.argument ? E(n.argument) : null, line };
         case "BreakStatement": return n.label ? { t: "note", text: "break с меткой не переводится", line } : { t: "break", line };
         case "ContinueStatement": return { t: "continue", line };
+        case "LabeledStatement": return [{ t: "label", name: n.label && (n.label.name || n.label), line }].concat([].concat(S(n.body)));
+        case "GotoStatement": return { t: "goto", name: n.name || (n.label && n.label.name), line, note: "goto переведён как «иди к»" };
+        case "PonWith": return { t: "with", value: E(n.value), name: n.name, body: (n.body || []).flatMap((x) => [].concat(S(x))), line, note: n.note || "конструкция using переведена как «с … как»" };
         case "BlockStatement": return B(n);
         case "EmptyStatement": return { t: "pass", line };
         case "ThrowStatement": {
@@ -452,9 +489,9 @@
             if (m.type === "PropertyDefinition" && !m.computed && (m.key.type === "Identifier" || m.key.type === "PrivateIdentifier")) return { t: "assign", targets: [{ t: "name", v: m.key.name }], op: "=", value: m.value ? E(m.value) : { t: "null" }, line: ml, isStatic: !!m.static, isPrivate: !!m.private || m.key.type === "PrivateIdentifier" };
             if (m.type === "PonNote") return { t: "note", text: m.text, line: ml };
             if (m.type !== "MethodDefinition") return { t: "note", text: "поля класса вне конструктора не переводятся", line: ml };
-            if (m.kind === "set") return { t: "note", text: "сеттеры не переводятся", line: ml };
+            if (m.kind === "set") return { t: "def", name: m.key.name, params: (m.static ? [] : [{ name: "self" }]).concat(params(m.value.params)), body: m.value.body ? B(m.value.body) : [], line: ml, isStatic: !!m.static, isSetter: true, isPrivate: !!m.private || m.key.type === "PrivateIdentifier", async: !!(m.value && m.value.async) };
             const name = m.kind === "constructor" ? "__init__" : m.key.name === "toString" ? "__str__" : m.key.name;
-            return { t: "def", name, params: (m.static ? [] : [{ name: "self" }]).concat(params(m.value.params)), body: m.value.body ? B(m.value.body) : [], line: ml, isStatic: !!m.static, isGetter: m.kind === "get", isAbstract: !!m.abstract, isPrivate: !!m.private || m.key.type === "PrivateIdentifier" };
+            return { t: "def", name, params: (m.static ? [] : [{ name: "self" }]).concat(params(m.value.params)), body: m.value.body ? B(m.value.body) : [], line: ml, isStatic: !!m.static, isGetter: m.kind === "get", isAbstract: !!m.abstract, isPrivate: !!m.private || m.key.type === "PrivateIdentifier", async: !!(m.value && m.value.async) };
           });
           return { t: "class", name: n.id.name, parent: n.superClass && n.superClass.name, ifaces: n.implements || [], body, line };
         }
@@ -502,10 +539,13 @@
           if (n.operator === "delete" && n.argument.type === "MemberExpression") { const m = E(n.argument); return { t: "call", fn: { t: "attr", obj: m.obj, name: "__убери" }, args: [m.t === "index" ? m.index : { t: "str", v: m.name }], kw: [] }; }
           if (n.operator === "typeof") return { t: "call", fn: { t: "name", v: "__typeof" }, args: [E(n.argument)], kw: [] };
           if (n.operator === "~") return { t: "un", op: "~", e: E(n.argument) };
+          if (n.operator === "&") return { t: "refof", target: E(n.argument) };
+          if (n.operator === "*") return { t: "deref", e: E(n.argument) };
           return un("операция «" + n.operator + "» не переводится");
         case "ConditionalExpression": return { t: "cond", test: E(n.test), a: E(n.consequent), b: E(n.alternate) };
         case "CallExpression":
           if (n.callee.type === "Super") return { t: "call", fn: { t: "attr", obj: { t: "call", fn: { t: "name", v: "super" }, args: [], kw: [] }, name: "__init__" }, args: n.arguments.map(E), kw: [] };
+          if (n.callee.type === "ThisExpression") return { t: "call", fn: { t: "name", v: "это" }, args: n.arguments.map(E), kw: [], thisCtor: true };
           return { t: "call", fn: E(n.callee), args: n.arguments.map((a) => (a.type === "SpreadElement" ? un("«...» в аргументах не переводится") : E(a))), kw: [] };
         case "NewExpression": return { t: "call", fn: E(n.callee), args: n.arguments.map(E), kw: [], isNew: true };
         case "MemberExpression":
@@ -519,7 +559,13 @@
         case "FunctionExpression":
           if (n.body.type !== "BlockStatement") return { t: "lambda", params: params(n.params), body: E(n.body) };
           return { t: "lambdaBlock", params: params(n.params), body: B(n.body) };
-        case "AssignmentExpression": return un("присваивание внутри выражения не переводится");
+        case "AssignmentExpression":
+          if (n.operator === "=" && n.left.type === "Identifier") return { t: "walrus", name: n.left.name, value: E(n.right) };
+          return un("присваивание внутри выражения не переводится");
+        case "AwaitExpression": return { t: "await", e: E(n.argument) };
+        case "PonMethodRef": return { t: "methodref", obj: E(n.object), name: n.name };
+        case "PonAnonClass": return { t: "anoncls", parent: n.parent, args: (n.arguments || []).map(E) };
+        case "ImportDeclaration": return un("импорт модулей JavaScript не переводится: подключайте файлы «Понятного» через подключи");
         case "UpdateExpression": return un("«++»/«--» внутри выражения не переводятся");
         case "SequenceExpression": return un("запятая между выражениями не переводится");
       }
@@ -664,6 +710,16 @@
           ind = si;
           return "функция(" + e.params.map((q) => nm(q.name) + (q.def ? " = " + E(q.def) : "")).join(", ") + ")\n" + inner.join("\n") + "\n" + "    ".repeat(ind) + "конец";
         }
+        case "walrus": return "(" + nm(e.name) + " := " + E(e.value) + ")";
+        case "await": return "ждать " + E(e.e, 9);
+        case "refof": return "ссылка " + E(e.target, 9);
+        case "deref": return "*" + E(e.e, 9);
+        case "methodref": return E(e.obj, 10) + "::" + nm(e.name);
+        case "anoncls": return "новый" + (e.parent ? " " + e.parent : "") + "(" + (e.args || []).map((x) => E(x)).join(", ") + ")";
+        case "dictcomp": {
+          const vars = e.targets.map(nm).join(", ");
+          return "{" + E(e.key) + ": " + E(e.value) + " для каждого " + vars + " из " + E(e.iter) + (e.cond ? " если " + E(e.cond) : "") + "}";
+        }
         case "comp": {
           if (e.targets.length !== 1) { pnote("генератор списка с несколькими переменными не переводится"); return "ничего"; }
           const v = nm(e.targets[0]);
@@ -760,7 +816,8 @@
             case "reversed": return E(e.args[0], 9) + ".перевёрнуто()";
             case "any": if (e.args[0] && e.args[0].t === "comp") return compPred(e.args[0], "любой"); return E(e.args[0], 9) + ".любой(x => x)";
             case "all": if (e.args[0] && e.args[0].t === "comp") return compPred(e.args[0], "все"); return E(e.args[0], 9) + ".все(x => x)";
-            case "type": case "open": case "map": case "filter": pnote("функция Python «" + n + "» не переводится точно"); break;
+            case "open": return "открой(" + a.join(", ") + ")";
+            case "type": case "map": case "filter": pnote("функция Python «" + n + "» не переводится точно"); break;
           }
         }
         if (from === "javascript") {
@@ -1010,6 +1067,13 @@
           emit("конец");
           return;
         }
+        case "with":
+          emit("с " + E(s.value) + " как " + nm(s.name));
+          inner(s.body);
+          emit("конец");
+          return;
+        case "label": emit("метка " + nm(s.name)); return;
+        case "goto": emit("иди к " + nm(s.name)); return;
         case "def": {
           let params = s.params.filter((q) => !q.rest);
           if (s.params.some((q) => q.rest)) pnote("параметры *args/**kwargs и «...» не переводятся");
@@ -1023,7 +1087,8 @@
           const plist = "(" + params.map((q) => nm(q.name) + (q.def ? " = " + E(q.def) : "")).join(", ") + ")";
           if (inCls && s.isAbstract && !s.body.some((b) => b.t !== "pass" && !(b.t === "expr" && b.e.t === "str") && b.t !== "raise")) { emit(mods + "абстрактная функция " + (inCls ? name : nm(name)) + plist); return; }
           if (inCls && s.isGetter && !params.length) emit(mods + "свойство " + name);
-          else emit(mods + "функция " + (inCls ? name : nm(name)) + plist);
+          else if (inCls && s.isSetter) emit(mods + "свойство " + name + "\n" + "    ".repeat(ind + 1) + "установить " + (params[0] ? nm(params[0].name) : "значение"));
+          else emit(mods + (s.async ? "асинхронная " : "") + "функция " + (inCls ? name : nm(name)) + plist);
           ind++;
           const globals = new Set();
           walkStmts(s.body, (b) => { if (b.t === "global") b.names.forEach((n) => globals.add(n)); });

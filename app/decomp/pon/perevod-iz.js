@@ -191,6 +191,13 @@
           if (L === "javascript") return e.name === "создать" ? "super(" + e.args.map((x) => E(x)).join(", ") + ")" : "super." + nm(e.name) + "(" + e.args.map((x) => E(x)).join(", ") + ")";
           return "base." + nm(e.name) + "(" + e.args.map((x) => E(x)).join(", ") + ")";
         case "call": {
+          if (e.thisCtor || (e.fn && e.fn.k === "this")) {
+            const a = e.args.map((x) => E(x)).join(", ");
+            note(e, "цепочка конструкторов «это(...)» переведена приблизительно: в целевом языке проверьте вызов другого конструктора");
+            if (L === "python") return "self.__init__(" + a + ")";
+            if (L === "csharp") return "this(" + a + ")";
+            return "this[\"создать\"](" + a + ")";
+          }
           if (e.fn.k === "name" && e.fn.ref === "builtin") return builtin(e, e.fn.name, e.args);
           if (e.fn.k === "name" && e.fn.ref === "class") return newObj(e.fn.name, e.args);
           return E(e.fn, 10) + "(" + e.args.map((x) => E(x)).join(", ") + ")";
@@ -202,6 +209,74 @@
           if (e.mode === "class") return newObj(e.name, all);
           if (e.mode === "user") return nm(e.name) + "(" + all.map((x) => E(x)).join(", ") + ")";
           return method(e, E(e.left, 10), e.name, e.args, false);
+        }
+        case "walrus":
+          if (L === "python") return wrap("(" + nm(e.name) + " := " + E(e.value) + ")", prec, 0);
+          return wrap("(" + nm(e.name) + " = " + E(e.value) + ")", prec, 0);
+        case "await":
+          return wrap("await " + E(e.e, 9), prec, 9);
+        case "refof":
+          note(e, "ссылка в «Понятном» — безопасная обёртка, а не настоящий указатель");
+          if (L === "python") return "{\"значение\": " + E(e.target) + "}";
+          return "{ get значение() { return " + E(e.target) + "; } }";
+        case "deref":
+          if (L === "python") return E(e.e, 10) + "[\"значение\"]";
+          return E(e.e, 10) + ".значение";
+        case "methodref":
+          if (L === "python") return "getattr(" + E(e.obj) + ", " + JSON.stringify(e.name) + ")";
+          if (L === "javascript") return E(e.obj, 10) + "." + nm(e.name) + ".bind(" + E(e.obj) + ")";
+          note(e, "ссылка на метод «::» в C# переведена как обычный доступ к методу — проверьте");
+          return E(e.obj, 10) + "." + nm(e.name);
+        case "thread":
+          note(e, "«поток» в «Понятном» выполняется сразу в том же потоке, это не настоящая нить ОС");
+          return L === "python" ? "None" : "null";
+        case "setlit": {
+          const inner = (e.items || []).map((x) => E(x)).join(", ");
+          if (L === "python") return inner ? "{" + inner + "}" : "set()";
+          if (L === "javascript") return "new Set([" + inner + "])";
+          return "new HashSet<dynamic> { " + inner + " }";
+        }
+        case "listcomp": {
+          const vars = e.name2 ? nm(e.name) + ", " + nm(e.name2) : nm(e.name);
+          if (L === "python") return "[" + E(e.value) + " for " + vars + " in " + (e.name2 ? E(e.list) + ".items()" : E(e.list)) + (e.cond ? " if " + E(e.cond) : "") + "]";
+          const bind = e.name2 ? "([" + nm(e.name) + ", " + nm(e.name2) + "])" : "(" + nm(e.name) + ")";
+          const src = e.name2 ? "Object.entries(" + E(e.list) + ")" : E(e.list, 10);
+          return src + (e.cond ? ".filter(" + bind + " => " + E(e.cond) + ")" : "") + ".map(" + bind + " => " + E(e.value) + ")";
+        }
+        case "dictcomp": {
+          if (L === "python") return "{" + E(e.key) + ": " + E(e.value) + " for " + (e.name2 ? nm(e.name) + ", " + nm(e.name2) : nm(e.name)) + " in " + (e.name2 ? E(e.list) + ".items()" : E(e.list)) + (e.cond ? " if " + E(e.cond) : "") + "}";
+          const bind = e.name2 ? "([" + nm(e.name) + ", " + nm(e.name2) + "])" : "(" + nm(e.name) + ")";
+          const src = e.name2 ? "Object.entries(" + E(e.list) + ")" : E(e.list, 10);
+          return "Object.fromEntries(" + src + (e.cond ? ".filter(" + bind + " => " + E(e.cond) + ")" : "") + ".map(" + bind + " => [" + E(e.key) + ", " + E(e.value) + "]))";
+        }
+        case "setcomp": {
+          if (L === "python") return "{" + E(e.value) + " for " + (e.name2 ? nm(e.name) + ", " + nm(e.name2) : nm(e.name)) + " in " + (e.name2 ? E(e.list) + ".items()" : E(e.list)) + (e.cond ? " if " + E(e.cond) : "") + "}";
+          const bind = e.name2 ? "([" + nm(e.name) + ", " + nm(e.name2) + "])" : "(" + nm(e.name) + ")";
+          const src = e.name2 ? "Object.entries(" + E(e.list) + ")" : E(e.list, 10);
+          return "new Set(" + src + (e.cond ? ".filter(" + bind + " => " + E(e.cond) + ")" : "") + ".map(" + bind + " => " + E(e.value) + "))";
+        }
+        case "switchexpr": {
+          note(e, "выражение «выбор» переведено через цепочку условий");
+          let acc = e.def ? (Array.isArray(e.def) ? (L === "python" ? "None" : "null") : E(e.def)) : (L === "python" ? "None" : "null");
+          for (let i = (e.cases || []).length - 1; i >= 0; i--) {
+            const c = e.cases[i];
+            const val = c.value ? E(c.value) : (L === "python" ? "None" : "null");
+            let cond;
+            if (c.bind) cond = c.guard ? E(c.guard) : (L === "python" ? "True" : "true");
+            else {
+              const eq = L === "javascript" ? " === " : " == ";
+              cond = (c.values || []).map((x) => E(e.subject) + eq + E(x, 5)).join(L === "python" ? " or " : " || ") || (L === "python" ? "False" : "false");
+              if (c.guard) cond = "(" + cond + ")" + (L === "python" ? " and " : " && ") + E(c.guard, 3);
+            }
+            acc = L === "python" ? "(" + val + " if " + cond + " else " + acc + ")" : "(" + cond + " ? " + val + " : " + acc + ")";
+          }
+          return acc;
+        }
+        case "anonclass": {
+          note(e, "безымянный класс переведён приблизительно");
+          if (L === "javascript") return "new (class " + (e.parent ? "extends " + nm(e.parent) + " " : "") + "{ })(" + (e.args || []).map((x) => E(x)).join(", ") + ")";
+          if (L === "python") return "type(\"Аноним\", (" + (e.parent ? nm(e.parent) : "object") + ",), {})()";
+          return "null";
         }
         case "lambda": {
           const ps = e.params.map((q) => nm(q.name) + (q.def ? (L === "python" ? "=" : " = ") + E(q.def) : "")).join(", ");
@@ -256,6 +331,11 @@
     }
     function builtinRef(e) {
       const map = { python: { "большими": "str.upper", "маленькими": "str.lower", "корень": "math.sqrt", "модуль": "abs", "число": "число", "строка": "показать", "длина": "len" }, javascript: { "корень": "Math.sqrt", "модуль": "Math.abs", "число": "Number", "строка": "показать", "длина": "длина" }, csharp: {} }[L];
+      if (e.name === "аргументы" || e.name === "argv") {
+        if (L === "python") return "__import__(\"sys\").argv[1:]";
+        if (L === "javascript") return "process.argv.slice(2)";
+        return "Environment.GetCommandLineArgs().Skip(1).ToList()";
+      }
       if (map[e.name]) return map[e.name];
       note(e, "встроенную функцию «" + e.name + "» как значение перевести нельзя");
       return e.name;
@@ -309,6 +389,9 @@
           case "запиши_файл": return "open(" + A(0) + ", \"w\", encoding=\"utf-8\").write(показать(" + A(1) + "))";
           case "допиши_файл": return "open(" + A(0) + ", \"a\", encoding=\"utf-8\").write(показать(" + A(1) + "))";
           case "файл_есть": return "__import__(\"os\").path.exists(" + A(0) + ")";
+          case "формат": case "printf": return A(0) + " % (" + a.slice(1).join(", ") + (a.length === 2 ? "," : "") + ")";
+          case "размер": case "sizeof": note(n, "размер — абстракция «Понятного» (число 8, логическое 1, строка длина×2), а не sizeof языка Си"); return "(8 if isinstance(" + A(0) + ", (int, float)) and not isinstance(" + A(0) + ", bool) else 1 if isinstance(" + A(0) + ", bool) else (len(" + A(0) + ") * 2 if isinstance(" + A(0) + ", str) else len(" + A(0) + ")))";
+          case "открой": return "open(" + A(0) + (a[1] ? ", " + A(1) : "") + ", encoding=\"utf-8\")";
         }
       }
       if (L === "javascript") {
@@ -339,6 +422,9 @@
           case "запиши_файл": return "require(\"fs\").writeFileSync(" + A(0) + ", показать(" + A(1) + "))";
           case "допиши_файл": return "require(\"fs\").appendFileSync(" + A(0) + ", показать(" + A(1) + "))";
           case "файл_есть": return "require(\"fs\").existsSync(" + A(0) + ")";
+          case "формат": case "printf": return A(0) + ".replace(/%[sdif]/g, () => String(arguments.length && 0))" + " /* формат: проверьте вручную */";
+          case "размер": case "sizeof": note(n, "размер — абстракция «Понятного», а не sizeof языка Си"); return "(typeof " + A(0) + " === \"number\" ? 8 : typeof " + A(0) + " === \"boolean\" ? 1 : typeof " + A(0) + " === \"string\" ? " + A(0) + ".length * 2 : Array.isArray(" + A(0) + ") ? " + A(0) + ".length : 8)";
+          case "открой": note(n, "открой() переведён как open-подобный объект — проверьте работу с файлом"); return "{ path: " + A(0) + " }";
         }
       }
       if (L === "csharp") {
@@ -360,6 +446,9 @@
           case "сумма": return "((IEnumerable<dynamic>)" + A(0) + ").Sum(x => (double)x)";
           case "макс": return "((List<dynamic>)" + A(0) + ").Max()";
           case "мин": return "((List<dynamic>)" + A(0) + ").Min()";
+          case "формат": case "printf": return "string.Format(" + a.join(", ") + ")";
+          case "размер": case "sizeof": note(n, "размер — абстракция «Понятного», а не sizeof языка Си"); return "8";
+          case "открой": note(n, "открой() в C# нужно заменить на File.Open"); return "null";
         }
       }
       note(n, "встроенная функция «" + name + "» не имеет точного аналога, оставлена как есть");
@@ -568,10 +657,21 @@
         }
         case "func": {
           const ps = s.params.map((q) => (L === "csharp" ? "dynamic " + q.name + (q.def ? " = null" : "") : nm(q.name) + (q.def ? (L === "python" ? "=" : " = ") + E(q.def) : "")));
+          if (s.getter && inClass) {
+            if (L === "python") { emit("@property"); emit("def " + nm(s.name) + "(self):"); ind++; block(s.body); ind--; emit(""); return; }
+            if (L === "javascript") { emit("get " + nm(s.name) + "() {"); inner(s.body); emit("}"); return; }
+            emit("public dynamic " + nm(s.name) + " { get {"); inner(s.body); emit("} }"); return;
+          }
+          if (s.setter && inClass) {
+            const pn = s.params[0] ? nm(s.params[0].name) : "значение";
+            if (L === "python") { emit("@" + nm(s.name) + ".setter"); emit("def " + nm(s.name) + "(self, " + pn + "):"); ind++; block(s.body); ind--; emit(""); return; }
+            if (L === "javascript") { emit("set " + nm(s.name) + "(" + pn + ") {"); inner(s.body); emit("}"); return; }
+            emit("public void set_" + nm(s.name) + "(dynamic " + pn + ")"); emit("{"); inner(s.body); emit("}"); return;
+          }
           if (L === "python") {
             const isInit = inClass && s.name === "создать";
             const name = isInit ? "__init__" : s.name === "строкой" && inClass ? "__str__" : nm(s.name);
-            emit("def " + name + "(" + (inClass ? ["self"].concat(ps) : ps).join(", ") + "):");
+            emit((s.async ? "async " : "") + "def " + name + "(" + (inClass ? ["self"].concat(ps) : ps).join(", ") + "):");
             ind++;
             if (isInit && inClass.fields.length) inClass.fields.forEach((f) => emit("self." + nm(f.name) + " = " + (f.value ? E(f.value) : "None")));
             block(s.body);
@@ -580,7 +680,7 @@
           } else if (L === "javascript") {
             const isInit = inClass && s.name === "создать";
             const name = isInit ? "constructor" : s.name === "строкой" && inClass ? "toString" : nm(s.name);
-            emit((inClass ? "" : "function ") + name + "(" + ps.join(", ") + ") {");
+            emit((inClass ? (s.async ? "async " : "") : (s.async ? "async function " : "function ")) + name + "(" + ps.join(", ") + ") {");
             ind++;
             if (isInit && inClass.parent && !s.body.some((b) => b.k === "expr" && b.expr.k === "super")) emit("super();");
             if (isInit) inClass.fields.forEach((f) => emit("this." + nm(f.name) + " = " + (f.value ? E(f.value) : "null") + ";"));
@@ -727,6 +827,48 @@
           }
           return;
         }
+        case "label":
+          if (L === "python") emitNote(s, "метка «" + s.name + "»: в Python нет goto");
+          else emit(nm(s.name) + ":");
+          return;
+        case "goto":
+          if (L === "csharp") { emit("goto " + nm(s.name) + ";"); return; }
+          emitNote(s, "переход «иди к " + s.name + "» (goto) в " + L + " не имеет прямого аналога");
+          return;
+        case "thread":
+          emitNote(s, "«поток» в «Понятном» выполняется сразу, это не отдельная нить ОС");
+          if (L === "python") { emit("def __поток" + (++tmp) + "():"); inner(s.body); emit("__поток" + tmp + "()"); }
+          else { emit("(() => {"); inner(s.body); emit("})();"); }
+          return;
+        case "with":
+          if (L === "python") { emit("with " + E(s.value) + " as " + nm(s.name) + ":"); inner(s.body); }
+          else if (L === "javascript") {
+            emit("{");
+            ind++;
+            emit("const " + nm(s.name) + " = " + E(s.value) + ";");
+            emit("try {");
+            inner(s.body);
+            emit("} finally {");
+            ind++;
+            emit("if (" + nm(s.name) + " && typeof " + nm(s.name) + ".выйти === \"function\") " + nm(s.name) + ".выйти();");
+            emit("else if (" + nm(s.name) + " && typeof " + nm(s.name) + ".close === \"function\") " + nm(s.name) + ".close();");
+            ind--;
+            emit("}");
+            ind--;
+            emit("}");
+          } else {
+            emit("using (dynamic " + nm(s.name) + " = " + E(s.value) + ")");
+            emit("{");
+            inner(s.body);
+            emit("}");
+          }
+          return;
+        case "module":
+          emitNote(s, "подключение модуля «" + (s.path || "") + "» вставлено прямо в перевод");
+          (s.body || []).forEach(S0);
+          if (s.alias) emitNote(s, "модуль доступен как «" + s.alias + "» — в переводе имена остались глобальными, проверьте");
+          if (s.names) emitNote(s, "из модуля взяты: " + s.names.map((x) => x.as || x.name).join(", "));
+          return;
       }
       emitNote(s, "эту команду перевести не удалось");
     }

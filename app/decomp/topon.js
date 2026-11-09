@@ -1,4 +1,4 @@
-// ИванКод 1.4: перевод декомпилированного кода (Java, C#, C/C++, Python) в «Понятный» 2.4.
+// ИванКод 1.4: перевод декомпилированного кода (Java, C#, C/C++, Python) в «Понятный» 2.5.
 // Разбор — готовым tree-sitter (web-tree-sitter + грамматики java/c_sharp/c), перевод — готовым переводчиком компилятора «Понятный»
 // (perevod-v.js: дерево ESTree → «Понятный»). Что не переводится, остаётся в программе комментарием с исходной строкой.
 const fs=require('fs'), path=require('path');
@@ -93,8 +93,8 @@ function convert(root,lang){
    parts.push(m[3]==='f'&&m[2]?call(mem(a,'toFixed'),[lit(+m[2])]):m[3]==='c'&&lang==='c'?call(mem(id('String'),'fromCharCode'),[a]):a) });
   return {e:tmpl(parts),bad} }
  function printOut(n,argsN,{err,fmt:isF,nl,cs}){ let args=argsN.map(E); let pre=[];
-  if(isF&&argsN.length&&/string_literal|interpolated|verbatim/.test(argsN[0].type)){ let fs=strLit(argsN[0]); if(fs===null) fs=''; const r=fmt(fs,args.slice(1),n,cs); if(r.bad) pre.push(note(n,'ширина поля и форматы %x/%e переведены без форматирования'));
-   args=[r.e]; if(!cs){ if(/\n$/.test(fs)){ args=[fmt(fs.replace(/\n$/,''),argsN.slice(1).map(E),n,cs).e] } else nl=false } }
+  if(isF&&argsN.length&&/string_literal|interpolated|verbatim/.test(argsN[0].type)){ let fs=strLit(argsN[0]); if(fs===null) fs=''; const r=fmt(fs,args.slice(1),n,cs); if(r.bad){ pre.push(note(n,'ширина поля и форматы %x/%e переведены через формат()')); const fs0=/\n$/.test(fs)?fs.replace(/\n$/,''):fs; args=[call(id('формат'),[lit(fs0)].concat(argsN.slice(1).map(E)))]; if(!cs&&!/\n$/.test(fs)) nl=false }
+   else { args=[r.e]; if(!cs){ if(/\n$/.test(fs)){ args=[fmt(fs.replace(/\n$/,''),argsN.slice(1).map(E),n,cs).e] } else nl=false } } }
   else if(isF&&argsN.length) pre.push(note(n,'формат печати не строка — переведён как есть'));
   if(nl===false) pre.push(note(n,'печать без перевода строки: в «Понятном» каждое «пиши» печатает с новой строки'));
   if(args.length===1&&args[0].type==='Literal'&&args[0].value===''&&nl!==false) args=[lit('')];
@@ -122,7 +122,9 @@ function convert(root,lang){
     if(['+','-','*','/','%','<','>','<=','>=','==','!=','&','|','^','<<','>>','>>>'].includes(op)) return {type:'BinaryExpression',operator:op==='=='?'===':op==='!='?'!==':op,left:l,right:r};
     return unsup(n,'операция «'+op+'»') }
    case 'unary_expression': case 'prefix_unary_expression': { const op=(F(n,'operator')||n.children[0]).text; const a=F(n,'operand')||F(n,'argument')||kids(n)[0];
-    if(['!','-','+','~'].includes(op)) return {type:'UnaryExpression',operator:op,argument:E(a)}; if(op==='*'||op==='&') return unsup(n,'указатели'); return unsup(n,'операция «'+op+'» внутри выражения') }
+    if(['!','-','+','~'].includes(op)) return {type:'UnaryExpression',operator:op,argument:E(a)};
+    if(op==='*'||op==='&'){ pendingNotes.push(note(n,'указатели: переведены как безопасная ссылка «Понятного»')); return {type:'UnaryExpression',operator:op,argument:E(a)} }
+    return unsup(n,'операция «'+op+'» внутри выражения') }
    case 'ternary_expression': case 'conditional_expression': return {type:'ConditionalExpression',test:E(F(n,'condition')),consequent:E(F(n,'consequence')),alternate:E(F(n,'alternative'))};
    case 'cast_expression': { const v=F(n,'value')||kids(n).slice(-1)[0]; const t=typeText(F(n,'type'))||''; if(INT_T.test(t)&&!/^char$/.test(t)&&!isInt(v)) return call(mem(id('Math'),'trunc'),[E(v)]); return E(v) }
    case 'field_access': { const o=F(n,'object'), f=F(n,'field').text; if(f==='length'&&!C.userProps.has(f)) return mem(E(o),'length'); if(o.type==='identifier'&&C.enums.has(o.text)) return mem(id(o.text),f); return mem(E(o),f) }
@@ -148,7 +150,7 @@ function convert(root,lang){
     return call(E(f),an.map(E)) }
    case 'object_creation_expression': { const t=F(n,'type'); const nm=t?t.text.replace(/<.*$/s,'').split('.').pop():'Объект'; const an=kids(F(n,'arguments')||{namedChildren:[]}).map(x=>x.type==='argument'?kids(x).slice(-1)[0]:x); const args=an.map(E);
     const init=kids(n).find(x=>/initializer/.test(x.type)); const bodyC=kids(n).find(x=>x.type==='class_body');
-    if(bodyC) return unsup(n,'анонимный класс');
+    if(bodyC){ pendingNotes.push(note(n,'анонимный класс переведён как «новый '+nm+'»: методы из тела проверьте вручную')); return {type:'PonAnonClass',parent:nm,arguments:args} }
     if(/^(ArrayList|LinkedList|List|Vector|Stack|ArrayDeque|Queue)$/.test(nm)) return init?E(init):an.length&&!isInt(an[0])?call(mem(args[0],'slice'),[]):{type:'ArrayExpression',elements:[]};
     if(/^(HashMap|TreeMap|LinkedHashMap|Dictionary|SortedDictionary|Hashtable)$/.test(nm)) return init?{type:'ObjectExpression',properties:kids(init).map(p=>{ const kv=kids(p); return {type:'Property',computed:true,key:E(kv[0]),value:E(kv[1])} })}:{type:'ObjectExpression',properties:[]};
     if(/^(HashSet|TreeSet|LinkedHashSet|SortedSet)$/.test(nm)) return call(id('set'),init?[{type:'ArrayExpression',elements:kids(init).map(E)}]:args.length?[args[0]]:[]);
@@ -172,10 +174,24 @@ function convert(root,lang){
    case 'is_pattern_expression': case 'is_expression': { const l=F(n,'expression')||F(n,'left')||kids(n)[0]; const p=F(n,'pattern')||F(n,'right')||kids(n)[1]; const t=p&&(p.type==='constant_pattern'||p.type==='type_pattern'?kids(p)[0]:p);
     if(!t||!/identifier|predefined_type|qualified_name|generic_name/.test(t.type)) return unsup(n,'проверка типа с новой переменной'); return {type:'BinaryExpression',operator:'instanceof',left:E(l),right:id(t.text.replace(/<.*$/s,'').split('.').pop())} }
    case 'assignment_expression': case 'update_expression': case 'postfix_unary_expression': return unsup(n,'присваивание внутри выражения');
-   case 'pointer_expression': return unsup(n,'указатели');
-   case 'sizeof_expression': return unsup(n,'sizeof');
-   case 'method_reference': return unsup(n,'ссылка на метод «::»');
-   case 'switch_expression': return unsup(n,'switch как выражение');
+   case 'pointer_expression': { const a=F(n,'argument')||kids(n)[0]; const op=(F(n,'operator')||n.children[0]||{}).text||n.text[0];
+    pendingNotes.push(note(n,'указатели: переведены как безопасная ссылка «Понятного»'));
+    return {type:'UnaryExpression',operator:(op==='&'||n.text.trim().startsWith('&'))?'&':'*',argument:E(a)} }
+   case 'sizeof_expression': { const a=F(n,'value')||F(n,'argument')||kids(n)[0];
+    pendingNotes.push(note(n,'sizeof переведён как размер() — абстракция «Понятного», не байты языка Си'));
+    if(a&&/type|specifier/.test(a.type)&&!['identifier','field_identifier'].includes(a.type)) return call(id('размер'),[lit(8)]);
+    return call(id('размер'),[a?E(a):lit(8)]) }
+   case 'method_reference': { const parts=kids(n); const o=F(n,'object')||parts[0]; const nameN=F(n,'name')||parts[parts.length-1];
+    pendingNotes.push(note(n,'ссылка на метод «::» переведена как оператор «::» «Понятного»'));
+    return {type:'PonMethodRef',object:E(o),name:nameN&&nameN.text==='new'?'создать':nameOf(nameN)} }
+   case 'switch_expression': { const disc=E(F(n,'condition')||F(n,'value')||kids(n)[0]); const body=F(n,'body'); let acc=lit(null);
+    for(const g of [...kids(body||{namedChildren:[]})].reverse()){ const labels=kids(g).filter(x=>x.type==='switch_label'||/switch_label|switch_pattern/.test(x.type));
+     const rest=kids(g).filter(x=>!labels.includes(x)); const isDef=labels.some(lb=>/^default\b/.test(lb.text.trim()))||!labels.length;
+     const val=rest[0]?E(rest[0]):lit(null); if(isDef){ acc=val; continue }
+     const tests=labels.flatMap(lb=>kids(lb).length?kids(lb).map(E):[]);
+     const test=tests.reduce((a,t)=>a?{type:'LogicalExpression',operator:'||',left:a,right:{type:'BinaryExpression',operator:'===',left:disc,right:t}}:{type:'BinaryExpression',operator:'===',left:disc,right:t},null);
+     if(test) acc={type:'ConditionalExpression',test,consequent:val,alternate:acc} } return acc }
+   case 'await_expression': return {type:'AwaitExpression',argument:E(F(n,'expression')||F(n,'argument')||F(n,'value')||kids(n)[0])};
   }
   return unsup(n) }
  const PRINT=()=>mem(id('console'),'log');
@@ -370,13 +386,18 @@ function convert(root,lang){
     const f=kids(n).find(x=>x.type==='finally_clause');
     return pre.concat([{type:'TryStatement',block:asBlock(F(n,'body')),handler:handlers[0]?{param:handlers[0].param,body:handlers[0].body}:null,handlers,finalizer:f?asBlock(kids(f).find(x=>x.type==='block')):null,loc}]) }
    case 'block': case 'compound_statement': return [{type:'BlockStatement',body:stmts(n),loc}];
-   case 'labeled_statement': return [note(n,'метка не переводится')].concat(kids(n).slice(1).flatMap(S));
-   case 'goto_statement': return [note(n,'goto не переводится')];
+   case 'labeled_statement': { const lb=F(n,'label')||kids(n)[0]; const body=F(n,'body')||kids(n).slice(-1)[0];
+    return [{type:'LabeledStatement',label:id(nameOf(lb)),body:body&&body!==lb?{type:'BlockStatement',body:S(body)}:{type:'EmptyStatement'},loc}] }
+   case 'goto_statement': { const lb=F(n,'label')||kids(n)[0]; return [note(n,'goto переведён как «иди к»'),{type:'GotoStatement',name:nameOf(lb),label:{name:nameOf(lb)},loc}] }
    case ';': case 'empty_statement': return [];
    case 'switch_expression': case 'switch_statement': return switchStmt(n);
    case 'assert_statement': { const k=kids(n); return [{type:'PonAssert',test:E(k[0]),message:k[1]?E(k[1]):null,loc}] }
-   case 'explicit_constructor_invocation': { const c=F(n,'constructor'); if(c&&c.text==='super'){ if(!C.cls.length||!C.cls[C.cls.length-1].sup) return []; return [expr(call({type:'Super'},argsOf(F(n,'arguments'))),n)] } return [note(n,'вызов другого конструктора this(...) не переводится')] }
-   case 'using_statement': return [note(n,'using переведён без автоматического закрытия')].concat(stmts(F(n,'body')||kids(n).slice(-1)[0]));
+   case 'explicit_constructor_invocation': { const c=F(n,'constructor'); if(c&&c.text==='super'){ if(!C.cls.length||!C.cls[C.cls.length-1].sup) return []; return [expr(call({type:'Super'},argsOf(F(n,'arguments'))),n)] } return [expr(call({type:'ThisExpression'},argsOf(F(n,'arguments'))),n)] }
+   case 'using_statement': { const bodyN=F(n,'body')||kids(n).slice(-1)[0]; const decl=F(n,'variable')||F(n,'declaration')||F(n,'expression')||kids(n).find(x=>x!==bodyN&&x.type!=='block'&&x.type!=='compound_statement');
+    let name='_ресурс', value=lit(null);
+    if(decl&&/declaration/.test(decl.type)){ const d=declarators(decl); if(d[0]){ name=d[0].id.name; value=d[0].init||lit(null) } }
+    else if(decl) value=E(decl);
+    return [{type:'PonWith',name,value,body:asBlock(bodyN).body,loc,note:'using переведён как «с … как»'}] }
    case 'yield_statement': return [note(n,'yield не переводится')];
    case 'synchronized_statement': case 'lock_statement': return [note(n,'синхронизация потоков не нужна')].concat(stmts(F(n,'body')||kids(n).slice(-1)[0]));
   }
@@ -408,10 +429,10 @@ function convert(root,lang){
   try{
   for(const m of ms){ const st=isSt(m), priv=isPriv(m);
    if(m.type==='method_declaration'||m.type==='constructor_declaration'){ C.fnStatic=st; const f=fn(m); C.fnStatic=false; const abs=!f.body;
-    if(m.type==='constructor_declaration'){ const ci=kids(m).find(x=>x.type==='constructor_initializer'); if(ci){ const isBase=/^:\s*base\b/.test(ci.text); const a=argsOf(kids(ci).find(x=>x.type==='argument_list')); if(isBase) f.body.body.unshift(expr(call({type:'Super'},a),ci)); else f.body.body.unshift(note(ci,'вызов другого конструктора this(...) не переводится')) }
+    if(m.type==='constructor_declaration'){ const ci=kids(m).find(x=>x.type==='constructor_initializer'); if(ci){ const isBase=/^:\s*base\b/.test(ci.text); const a=argsOf(kids(ci).find(x=>x.type==='argument_list')); if(isBase) f.body.body.unshift(expr(call({type:'Super'},a),ci)); else f.body.body.unshift(expr(call({type:'ThisExpression'},a),ci)) }
      members.push({type:'MethodDefinition',kind:'constructor',key:id('constructor'),value:{params:f.params,body:f.body},loc:L(m)}) }
-    else if(st&&flat) pre.push({type:'FunctionDeclaration',id:id(f.name),params:f.params,body:f.body||{type:'BlockStatement',body:[]},loc:L(m)});
-    else members.push({type:'MethodDefinition',kind:'method',static:st&&n.type!=='interface_declaration',private:priv,abstract:abs,key:id(f.name==='ToString'?'toString':f.name),value:{params:f.params,body:f.body||{type:'BlockStatement',body:[]}},loc:L(m)}) }
+    else if(st&&flat) pre.push({type:'FunctionDeclaration',id:id(f.name),params:f.params,body:f.body||{type:'BlockStatement',body:[]},async:/\basync\b/.test(modText(m)),loc:L(m)});
+    else members.push({type:'MethodDefinition',kind:'method',static:st&&n.type!=='interface_declaration',private:priv,abstract:abs,key:id(f.name==='ToString'?'toString':f.name),value:{params:f.params,body:f.body||{type:'BlockStatement',body:[]},async:/\basync\b/.test(modText(m))},loc:L(m)}) }
    else if(m.type==='field_declaration'){ const vd=kids(m).find(x=>x.type==='variable_declaration'); C.fnStatic=st; const d=declarators(vd||m,F(m,'type')||(vd&&F(vd,'type'))); C.fnStatic=false; const cst=/\b(final|readonly|const)\b/.test(modText(m));
     if(st&&flat) pre.push({type:'VariableDeclaration',kind:cst?'const':'let',declarations:d,loc:L(m)});
     else for(const x of d) members.push({type:'PropertyDefinition',key:x.id,value:x.init,static:st,private:priv,loc:L(m)}) }
@@ -419,7 +440,12 @@ function convert(root,lang){
     if(v&&v.type==='arrow_expression_clause'){ C.fnStatic=st; scanLocals(m); const e=E(kids(v)[0]); C.types.pop(); C.fnStatic=false; members.push({type:'MethodDefinition',kind:'get',static:st,key:id(pn),value:{params:[],body:{type:'BlockStatement',body:[{type:'ReturnStatement',argument:e}]}},loc:L(m)}); continue }
     const getB=acc&&kids(acc).find(a=>/^get/.test(a.text)&&kids(a).some(z=>z.type==='block'||z.type==='arrow_expression_clause'));
     if(getB){ const b=kids(getB).find(z=>z.type==='block'||z.type==='arrow_expression_clause'); C.fnStatic=st; scanLocals(m); const body=b.type==='block'?asBlock(b):{type:'BlockStatement',body:[{type:'ReturnStatement',argument:E(kids(b)[0])}]}; C.types.pop(); C.fnStatic=false;
-     members.push({type:'MethodDefinition',kind:'get',static:st,key:id(pn),value:{params:[],body},loc:L(m)}); if(kids(acc).some(a=>/^set/.test(a.text)&&kids(a).length)) members.push({type:'PonNote',text:'сеттер свойства «'+pn+'» не переводится',loc:L(m)}); continue }
+     members.push({type:'MethodDefinition',kind:'get',static:st,key:id(pn),value:{params:[],body},loc:L(m)});
+     const setA=acc&&kids(acc).find(a=>/^set/.test(a.text));
+     if(setA){ const sb=kids(setA).find(z=>z.type==='block'||z.type==='arrow_expression_clause');
+      if(sb){ C.fnStatic=st; scanLocals(m); const sbody=sb.type==='block'?asBlock(sb):{type:'BlockStatement',body:[]}; C.types.pop(); C.fnStatic=false;
+       members.push({type:'MethodDefinition',kind:'set',static:st,key:id(pn),value:{params:[id('значение')],body:sbody},loc:L(m)}) } }
+     continue }
     members.push({type:'PropertyDefinition',key:id(pn),value:v?E(v):defaultFor(typeText(F(m,'type'))),static:st,private:false,loc:L(m)}) }
    else if(/^(class|record|struct|enum|interface)_declaration$/.test(m.type)){ C.cls.pop(); C.types.pop(); try{ pre.push(...top(m)) } finally { C.cls.push({name:nm,inst,stat,flat,sup}); C.types.push(ftypes) } }
    else if(m.type==='static_initializer'||m.type==='block') pre.push(...stmts(kids(m).find(x=>x.type==='block')||m));
