@@ -14,7 +14,7 @@
     let depth = 0;
     let cont = false;
     for (let ln = 0; ln < lines.length; ln++) {
-      const raw = lines[ln];
+      let raw = lines[ln];
       let i = 0;
       if (depth === 0 && !cont) {
         const m = raw.match(/^[ \t]*/)[0];
@@ -39,8 +39,10 @@
           const q = m[2];
           let j = i + m[0].length;
           let s = "";
+          const sLine = ln + 1;
           for (;;) {
-            if (j >= raw.length) throw new TranslateError(q.length === 3 ? "многострочные строки \"\"\"…\"\"\" не переводятся" : "строка не закрыта", ln + 1, col);
+            if (j >= raw.length && q.length === 3 && ln + 1 < lines.length) { s += "\n"; ln++; raw = lines[ln]; j = 0; continue; }
+            if (j >= raw.length) throw new TranslateError("строка не закрыта", ln + 1, col);
             if (raw.startsWith(q, j)) { j += q.length; break; }
             if (raw[j] === "\\" && !prefix.includes("r")) {
               const e = raw[j + 1];
@@ -51,13 +53,13 @@
             }
             s += raw[j++];
           }
-          toks.push({ t: prefix.includes("f") ? "fstr" : "str", v: s, line: ln + 1, col });
+          toks.push({ t: prefix.includes("f") ? "fstr" : "str", v: s, line: sLine, col });
           i = j;
           continue;
         }
         if ((m = raw.slice(i).match(/^\d[\d_]*(\.\d+)?([eE][+-]?\d+)?|^\.\d+/))) { toks.push({ t: "num", v: parseFloat(m[0].replace(/_/g, "")), line: ln + 1, col }); i += m[0].length; continue; }
         if ((m = raw.slice(i).match(/^[\p{L}_][\p{L}\p{N}\p{Mn}\p{Mc}_]*/u))) { toks.push({ t: "name", v: m[0].normalize("NFKC"), line: ln + 1, col }); i += m[0].length; continue; }
-        if ((m = raw.slice(i).match(/^(\*\*=|\/\/=|\*\*|\/\/|==|!=|<=|>=|\+=|-=|\*=|\/=|%=|->|:=|[-+*\/%<>=()\[\]{},.:;@~|&^])/))) {
+        if ((m = raw.slice(i).match(/^(\*\*=|\/\/=|<<=|>>=|\*\*|\/\/|==|!=|<=|>=|\+=|-=|\*=|\/=|%=|&=|\|=|\^=|<<|>>|->|:=|[-+*\/%<>=()\[\]{},.:;@~|&^])/))) {
           const op = m[0];
           if ("([{".includes(op)) depth++;
           if (")]}".includes(op)) depth--;
@@ -136,19 +138,21 @@
       if (isKw("try")) {
         next();
         const body = block();
-        let handler = null, errName = null, fin = null, note = null;
+        let fin = null, note = null;
+        const handlers = [];
         while (isKw("except")) {
           next();
-          if (!isOp(":")) { expr(); if (accept("name", "as")) errName = expect("name").v; }
+          let types = [], en = null;
+          if (!isOp(":")) { const te = expr(); types = te.t === "tuple" ? te.items : [te]; if (accept("name", "as")) en = expect("name").v; }
           const h = block();
-          if (handler) note = "несколько блоков except: переведён только первый"; else handler = h;
+          handlers.push({ types: types.map((x) => (x.t === "name" ? x.v : x.t === "attr" ? x.name : null)), errName: en, body: h });
         }
         if (isKw("else")) { next(); block(); note = "блок else у try не переведён"; }
         if (isKw("finally")) { next(); fin = block(); }
-        return { t: "try", body, handler, errName, fin, line, note };
+        return { t: "try", body, handlers, handler: handlers[0] ? handlers[0].body : null, errName: handlers[0] ? handlers[0].errName : null, fin, line, note };
       }
       if (isKw("with")) { while (!isOp(":")) next(); block(); return { t: "note", text: "конструкция with не переводится", line }; }
-      if (isOp("@")) { next(); expr(); expect("nl"); const s = statement(); s.note = "декоратор не переведён"; return s; }
+      if (isOp("@")) { next(); const d = expr(); expect("nl"); const s = statement(); if (d.t === "name" && (d.v === "staticmethod" || d.v === "classmethod") && s.t === "def") s.isStatic = true; else if (d.t === "name" && d.v === "property" && s.t === "def") s.isGetter = true; else if (d.t === "name" && d.v === "abstractmethod" && s.t === "def") s.isAbstract = true; else s.note = "декоратор не переведён"; return s; }
       return simple();
     }
     function simple() {
@@ -161,10 +165,11 @@
       else if (isKw("raise")) { next(); r = { t: "raise", value: is("nl") ? null : expr(), line }; }
       else if (isKw("import") || isKw("from")) { while (!is("nl") && !is("eof")) next(); r = { t: "import", line, text: "импорт модулей Python не переводится: известные функции заменены встроенными" }; }
       else if (isKw("global") || isKw("nonlocal")) { next(); const names = [expect("name").v]; while (accept("op", ",")) names.push(expect("name").v); r = { t: "global", names, line }; }
-      else if (isKw("del") || isKw("assert")) { const w = next().v; while (!is("nl") && !is("eof")) next(); r = { t: "note", text: w + " не переводится", line }; }
+      else if (isKw("assert")) { next(); const test = expr(); const msg = accept("op", ",") ? expr() : null; r = { t: "assert", test, msg, line }; }
+      else if (isKw("del")) { next(); const tg = exprList(); const items = tg.t === "tuple" ? tg.items : [tg]; r = { t: "del", items, line }; }
       else {
         const target = exprList();
-        if (is("op") && ["=", "+=", "-=", "*=", "/=", "%=", "**=", "//="].includes(peek().v)) {
+        if (is("op") && ["=", "+=", "-=", "*=", "/=", "%=", "**=", "//=", "&=", "|=", "^=", "<<=", ">>="].includes(peek().v)) {
           const op = next().v;
           let value = exprList();
           const targets = [target];
@@ -225,10 +230,13 @@
         return l;
       }
     }
-    function bitE() { let l = addE(); while (isOp("|") || isOp("&") || isOp("^")) { next(); addE(); l = { t: "unsupported", text: "побитовые операции не переводятся" }; } return l; }
+    function bitE() { let l = xorE(); while (isOp("|")) { next(); l = { t: "bin", op: "|", l, r: xorE() }; } return l; }
+    function xorE() { let l = andBE(); while (isOp("^")) { next(); l = { t: "bin", op: "^^", l, r: andBE() }; } return l; }
+    function andBE() { let l = shiftE(); while (isOp("&")) { next(); l = { t: "bin", op: "&", l, r: shiftE() }; } return l; }
+    function shiftE() { let l = addE(); while (isOp("<<") || isOp(">>")) { const op = next().v; l = { t: "bin", op, l, r: addE() }; } return l; }
     function addE() { let l = mulE(); while (isOp("+") || isOp("-")) { const op = next().v; l = { t: "bin", op, l, r: mulE() }; } return l; }
     function mulE() { let l = unE(); while (isOp("*") || isOp("/") || isOp("%") || isOp("//")) { const op = next().v; l = { t: "bin", op, l, r: unE() }; } return l; }
-    function unE() { if (isOp("-")) { next(); return { t: "un", op: "-", e: unE() }; } if (isOp("+")) { next(); return unE(); } return powE(); }
+    function unE() { if (isOp("-")) { next(); return { t: "un", op: "-", e: unE() }; } if (isOp("+")) { next(); return unE(); } if (isOp("~")) { next(); return { t: "un", op: "~", e: unE() }; } return powE(); }
     function powE() { const b = postE(); if (isOp("**")) { next(); return { t: "bin", op: "^", l: b, r: unE() }; } return b; }
     function args() {
       expect("op", "(");
@@ -305,7 +313,13 @@
         const entries = [];
         while (!isOp("}")) {
           const k = expr();
-          if (!accept("op", ":")) { while (!isOp("}")) next(); expect("op", "}"); return { t: "unsupported", text: "множества (set) не переводятся" }; }
+          if (!accept("op", ":")) {
+            if (isKw("for")) { const c = comprehension(k); expect("op", "}"); return { t: "call", fn: { t: "name", v: "set" }, args: [c], kw: [] }; }
+            const items = [k];
+            while (accept("op", ",")) { if (isOp("}")) break; items.push(expr()); }
+            expect("op", "}");
+            return { t: "call", fn: { t: "name", v: "set" }, args: [{ t: "list", items }], kw: [] };
+          }
           entries.push({ key: k, value: expr() });
           if (!accept("op", ",")) break;
         }
@@ -355,18 +369,23 @@
       const line = n.loc.start.line;
       switch (n.type) {
         case "PonNote": return { t: "note", text: n.text, line };
+        case "PonEnum": return { t: "enum", name: n.name, items: n.items.map((it) => ({ name: it.name, value: it.value ? E(it.value) : null })), line };
+        case "PonInterface": return { t: "iface", name: n.name, methods: n.methods.map((m) => ({ name: m.name, params: params(m.params) })), line };
+        case "PonStruct": return { t: "struct", name: n.name, fields: n.fields.map((f) => (typeof f === "string" ? { name: f, value: null } : { name: f.name, value: f.value ? E(f.value) : null })), line };
+        case "PonAssert": return { t: "assert", test: E(n.test), msg: n.message ? E(n.message) : null, line };
+        case "PonWarn": return { t: "expr", e: { t: "call", fn: { t: "name", v: "\u0001warn" }, args: n.arguments.map(E), kw: [] }, line };
         case "VariableDeclaration":
-          return n.declarations.map((d) => (d.id.type === "Identifier" ? { t: "assign", targets: [{ t: "name", v: d.id.name }], op: "=", value: d.init ? E(d.init) : { t: "null" }, line, decl: n.kind } : { t: "note", text: "деструктуризация не переводится", line }));
+          return n.declarations.map((d) => (d.id.type === "ArrayPattern" && d.init && d.id.elements.every((x) => x && x.type === "Identifier") ? { t: "assign", targets: [{ t: "tuple", items: d.id.elements.map((x) => ({ t: "name", v: x.name })) }], op: "=", value: E(d.init), line, decl: n.kind } : d.id.type === "Identifier" ? { t: "assign", targets: [{ t: "name", v: d.id.name }], op: "=", value: d.init ? E(d.init) : { t: "null" }, line, decl: n.kind } : { t: "note", text: "деструктуризация не переводится", line }));
         case "ExpressionStatement": {
           const e = n.expression;
-          if (e.type === "AssignmentExpression") return { t: "assign", targets: [E(e.left)], op: e.operator === "**=" ? "^=" : e.operator, value: E(e.right), line };
+          if (e.type === "AssignmentExpression") return { t: "assign", targets: [E(e.left)], op: e.operator === "**=" ? "^=" : e.operator === "^=" ? "^^=" : e.operator, value: E(e.right), line };
           if (e.type === "UpdateExpression") return { t: "assign", targets: [E(e.argument)], op: e.operator === "++" ? "+=" : "-=", value: numE(1), line };
           if (e.type === "Literal" && e.value === "use strict") return { t: "pass", line };
           return { t: "expr", e: E(e), line };
         }
         case "IfStatement": return { t: "if", test: E(n.test), body: B(n.consequent), orelse: n.alternate ? B(n.alternate) : null, line };
         case "WhileStatement": return { t: "while", test: E(n.test), body: B(n.body), line };
-        case "DoWhileStatement": return { t: "while", test: { t: "bool", v: true }, body: B(n.body).concat([{ t: "if", test: { t: "un", op: "не", e: E(n.test) }, body: [{ t: "break", line }], orelse: null, line }]), line, note: "do…while переведён через «пока истина» и «стоп»" };
+        case "DoWhileStatement": return { t: "dowhile", test: E(n.test), body: B(n.body), line };
         case "ForStatement": {
           const init = n.init, test = n.test, upd = n.update;
           if (init && init.type === "VariableDeclaration" && init.declarations.length === 1 && test && test.type === "BinaryExpression" && test.left.type === "Identifier" && test.left.name === init.declarations[0].id.name && upd) {
@@ -407,7 +426,10 @@
           if (a.type === "NewExpression" && a.callee.name && /Error$/.test(a.callee.name)) return { t: "raise", value: a.arguments[0] ? E(a.arguments[0]) : { t: "str", v: "ошибка" }, line };
           return { t: "raise", value: E(a), line };
         }
-        case "TryStatement": return { t: "try", body: B(n.block), handler: n.handler ? B(n.handler.body) : null, errName: n.handler && n.handler.param ? n.handler.param.name : null, fin: n.finalizer ? B(n.finalizer) : null, line };
+        case "TryStatement": {
+          const hs = n.handlers ? n.handlers.map((h) => ({ types: h.types || [], errName: h.param ? h.param.name : null, body: B(h.body) })) : n.handler ? [{ types: [], errName: n.handler.param ? n.handler.param.name : null, body: B(n.handler.body) }] : [];
+          return { t: "try", body: B(n.block), handlers: hs, handler: hs[0] ? hs[0].body : null, errName: hs[0] ? hs[0].errName : null, fin: n.finalizer ? B(n.finalizer) : null, line };
+        }
         case "SwitchStatement": {
           const cases = [];
           let def = null, note = null, vals = [];
@@ -427,12 +449,14 @@
         case "ClassDeclaration": {
           const body = n.body.body.map((m) => {
             const ml = m.loc.start.line;
+            if (m.type === "PropertyDefinition" && !m.computed && (m.key.type === "Identifier" || m.key.type === "PrivateIdentifier")) return { t: "assign", targets: [{ t: "name", v: m.key.name }], op: "=", value: m.value ? E(m.value) : { t: "null" }, line: ml, isStatic: !!m.static, isPrivate: !!m.private || m.key.type === "PrivateIdentifier" };
+            if (m.type === "PonNote") return { t: "note", text: m.text, line: ml };
             if (m.type !== "MethodDefinition") return { t: "note", text: "поля класса вне конструктора не переводятся", line: ml };
-            if (m.kind === "get" || m.kind === "set" || m.static) return { t: "note", text: "геттеры, сеттеры и static-методы не переводятся", line: ml };
+            if (m.kind === "set") return { t: "note", text: "сеттеры не переводятся", line: ml };
             const name = m.kind === "constructor" ? "__init__" : m.key.name === "toString" ? "__str__" : m.key.name;
-            return { t: "def", name, params: [{ name: "self" }].concat(params(m.value.params)), body: B(m.value.body), line: ml };
+            return { t: "def", name, params: (m.static ? [] : [{ name: "self" }]).concat(params(m.value.params)), body: m.value.body ? B(m.value.body) : [], line: ml, isStatic: !!m.static, isGetter: m.kind === "get", isAbstract: !!m.abstract, isPrivate: !!m.private || m.key.type === "PrivateIdentifier" };
           });
-          return { t: "class", name: n.id.name, parent: n.superClass && n.superClass.name, body, line };
+          return { t: "class", name: n.id.name, parent: n.superClass && n.superClass.name, ifaces: n.implements || [], body, line };
         }
       }
       return { t: "note", text: "конструкция «" + n.type + "» не переводится", line };
@@ -458,7 +482,9 @@
         case "ArrayExpression": return { t: "list", items: n.elements.map((x) => (x && x.type !== "SpreadElement" ? E(x) : un("«...» в списке не переводится"))) };
         case "ObjectExpression": return { t: "dict", entries: n.properties.map((p) => (p.type === "Property" ? { key: p.computed ? E(p.key) : { t: "str", v: p.key.name !== undefined ? p.key.name : String(p.key.value) }, value: E(p.value) } : { key: { t: "str", v: "_" }, value: un("«...» в объекте не переводится") })) };
         case "BinaryExpression": {
-          const map = { "===": "==", "!==": "!=", "==": "==", "!=": "!=", "<": "<", ">": ">", "<=": "<=", ">=": ">=", "+": "+", "-": "-", "*": "*", "/": "/", "%": "%", "**": "^", "in": "в" };
+          const map = { "===": "==", "!==": "!=", "==": "==", "!=": "!=", "<": "<", ">": ">", "<=": "<=", ">=": ">=", "+": "+", "-": "-", "*": "*", "/": "/", "%": "%", "**": "^", "in": "в", "&": "&", "|": "|", "^": "^^", "<<": "<<", ">>": ">>", ">>>": ">>>" };
+          if (n.operator === "instanceof") return { t: "call", fn: { t: "name", v: "isinstance" }, args: [E(n.left), E(n.right)], kw: [] };
+          if (n.operator === "//") return { t: "bin", op: "//", l: E(n.left), r: E(n.right) };
           if (!(n.operator in map)) return un("операция «" + n.operator + "» не переводится");
           return { t: "bin", op: map[n.operator], l: E(n.left), r: E(n.right), jsLoose: n.operator === "==" || n.operator === "!=" };
         }
@@ -475,6 +501,7 @@
           if (n.operator === "+") return { t: "call", fn: { t: "name", v: "Number" }, args: [E(n.argument)], kw: [] };
           if (n.operator === "delete" && n.argument.type === "MemberExpression") { const m = E(n.argument); return { t: "call", fn: { t: "attr", obj: m.obj, name: "__убери" }, args: [m.t === "index" ? m.index : { t: "str", v: m.name }], kw: [] }; }
           if (n.operator === "typeof") return { t: "call", fn: { t: "name", v: "__typeof" }, args: [E(n.argument)], kw: [] };
+          if (n.operator === "~") return { t: "un", op: "~", e: E(n.argument) };
           return un("операция «" + n.operator + "» не переводится");
         case "ConditionalExpression": return { t: "cond", test: E(n.test), a: E(n.consequent), b: E(n.alternate) };
         case "CallExpression":
@@ -486,6 +513,7 @@
           if (n.computed) return { t: "index", obj: E(n.object), index: E(n.property), safe: n.optional };
           return { t: "attr", obj: E(n.object), name: n.property.name, safe: n.optional };
         case "ChainExpression": return E(n.expression);
+        case "ArrayPattern": return n.elements.every((x) => x && x.type !== "RestElement") ? { t: "tuple", items: n.elements.map(E) } : un("деструктуризация с пропусками или «...» не переводится");
         case "ThisExpression": return { t: "name", v: "self" };
         case "ArrowFunctionExpression":
         case "FunctionExpression":
@@ -541,8 +569,9 @@
     let classCtx = null;
 
     const classNames = new Set();
+    const ifaceNames = new Set();
     const userMethodNames = new Set();
-    walkStmts(ir, (s) => { if (s.t === "class") { classNames.add(s.name); s.body.forEach((m) => m.t === "def" && userMethodNames.add(m.name)); } });
+    walkStmts(ir, (s) => { if (s.t === "iface") ifaceNames.add(s.name); if (s.t === "class") { classNames.add(s.name); s.body.forEach((m) => m.t === "def" && userMethodNames.add(m.name)); } });
     const allDefs = (b) => { b.forEach((s) => { if (s.t === "def") allDefs(s.body); if (s.t === "class") s.body.forEach((m) => { if (m.t === "def") allDefs(m.body); }); }); };
     allDefs(ir);
 
@@ -567,6 +596,7 @@
         let ok = false;
         for (const s of body) {
           if (s.t === "assign" && s.targets.length === 1 && s.targets[0].t === "name" && s.targets[0].v === n) { ok = s.op === "=" && !usesName(s.value, n); break; }
+          if (s.t === "assign" && s.targets.length === 1 && s.targets[0].t === "tuple" && s.targets[0].items.some((x) => x.t === "name" && x.v === n)) { const tn = s.targets[0].items; ok = s.op === "=" && tn.every((x) => x.t === "name") && !tn.some((x) => usesName(s.value, x.v)); break; }
           if (s.t !== "def" && s.t !== "class" && usesName(s, n)) break;
         }
         if (!ok) pre.push(n);
@@ -601,20 +631,22 @@
         case "str": return str(e.v);
         case "bool": return e.v ? "истина" : "ложь";
         case "null": return "ничего";
-        case "name": return e.v === "self" ? "это" : nm(e.v);
+        case "name": return e.v === "self" || (e.v === "cls" && classCtx) ? "это" : nm(e.v);
         case "fstr": return "\"" + e.parts.map((x) => (typeof x === "string" ? strBody(x) : x.t === "fmt" ? fmt(x) : "{" + E(x.t === "call" && x.fn.t === "name" && x.fn.v === "показать" && x.args.length === 1 ? x.args[0] : x) + "}")).join("") + "\"";
         case "list": return "[" + e.items.map((x) => E(x)).join(", ") + "]";
         case "tuple": pnote("кортеж переведён как список"); return "[" + e.items.map((x) => E(x)).join(", ") + "]";
         case "dict": return "{" + e.entries.map((x) => (x.key.t === "str" && /^[A-Za-zА-Яа-яЁё_][\wА-Яа-яЁё]*$/.test(x.key.v) && !PON_RESERVED.has(x.key.v) ? x.key.v : E(x.key)) + ": " + E(x.value)).join(", ") + "}";
         case "bin": {
           if (e.jsLoose) pnote("нестрогое сравнение «==» переведено как строгое");
-          if (e.op === "//") { pnote("деление нацело «//» переведено через целое(): для отрицательных чисел результат может отличаться"); return "целое(" + E(e.l) + " / " + E(e.r) + ")"; }
+          if (e.op === "//") return "нацело(" + E(e.l) + ", " + E(e.r) + ")";
+          const BITS = { "&": "бит_и", "|": "бит_или", "^^": "бит_искл", "<<": "сдвиг_влево", ">>": "сдвиг_вправо", ">>>": "сдвиг_вправо_без_знака" };
+          if (BITS[e.op]) return BITS[e.op] + "(" + E(e.l) + ", " + E(e.r) + ")";
           if (e.op === "/" && from === "python") pnote("в Python «/» всегда даёт дробь (6 / 2 = 3.0), а «Понятный» напишет 3");
           if (e.op === "%" && from === "javascript") pnote("остаток от деления отрицательных чисел в JavaScript считается иначе");
           const p = PREC[e.op];
           return wrap(E(e.l, p) + " " + e.op + " " + E(e.r, p + (e.op === "^" ? 0 : 1)), prec, p);
         }
-        case "un": return e.op === "не" ? wrap("не " + E(e.e, 3), prec, 3) : wrap("-" + E(e.e, 7), prec, 7);
+        case "un": return e.op === "~" ? "бит_не(" + E(e.e) + ")" : e.op === "не" ? wrap("не " + E(e.e, 3), prec, 3) : wrap("-" + E(e.e, 7), prec, 7);
         case "cond": return wrap("если " + E(e.test, 1) + " то " + E(e.a, 1) + " иначе " + E(e.b, 1), prec, 0);
         case "index": return E(e.obj, 9) + (e.safe ? "?.[" : "[") + E(e.index) + "]";
         case "slice": return E(e.obj, 9) + ".срез(" + (e.lo ? E(e.lo) : "0") + (e.hi ? ", " + E(e.hi) : "") + ")";
@@ -653,13 +685,33 @@
     }
     const PY_METHODS = { upper: "большими", lower: "маленькими", strip: "обрезать", split: "разделить", replace: "заменить", startswith: "начинается", endswith: "заканчивается", find: "найди", append: "добавь", pop: "убери", insert: "вставь", sort: "сортируй", reverse: "обрати", keys: "ключи", values: "значения", items: "пары", get: "получи", copy: "копия", index: "найди", capitalize: "с_заглавной", clear: "очисти", count: null };
     const JS_METHODS = { toUpperCase: "большими", toLowerCase: "маленькими", trim: "обрезать", split: "разделить", replaceAll: "заменить", replace: "заменить", startsWith: "начинается", endsWith: "заканчивается", indexOf: "найди", includes: "содержит", push: "добавь", pop: "убери", sort: "сортируй", reverse: "обрати", slice: "срез", filter: "отфильтруй", map: "преобразуй", reduce: "свернуть", forEach: "для_каждого", join: "соедини", repeat: "повтори" };
+    function mem(n) { return /^__/.test(n) && !/__$/.test(n) ? n.replace(/^_+/, "_") : /^__/.test(n) ? "особое" + n.replace(/_/g, "") : n; }
+    const PY_TYPES = { int: "целое", float: "число", str: "строка", bool: "логическое", list: "список", dict: "словарь", set: "множество", tuple: "список", String: "строка", Integer: "целое", Double: "число", Boolean: "логическое", Number: "число" };
     function attr(e) {
       if (e.name === "length" && from === "javascript") return E(e.obj, 9) + ".длина";
       if (e.obj.t === "name" && ((e.obj.v === "Math" && e.name === "PI") || (e.obj.v === "math" && e.name === "pi"))) return "ПИ";
-      if (e.obj.t === "name" && e.obj.v === "self") return "это." + e.name;
-      return E(e.obj, 9) + (e.safe ? "?." : ".") + e.name;
+      if (e.obj.t === "name" && e.obj.v === "self") return "это." + mem(e.name);
+      return E(e.obj, 9) + (e.safe ? "?." : ".") + mem(e.name);
+    }
+    function isinst(args) {
+      const t = args[1];
+      if (!t) return "ничего";
+      const one = (x) => (x.t === "name" && PY_TYPES[x.v] ? "экземпляр(" + E(args[0]) + ", " + str(PY_TYPES[x.v]) + ")" : "экземпляр(" + E(args[0]) + ", " + E(x) + ")");
+      if (t.t === "tuple") return "(" + t.items.map(one).join(" или ") + ")";
+      return one(t);
+    }
+    function compPred(c, how) {
+      if (c.targets.length !== 1) { pnote("генератор с несколькими переменными не переводится"); return "ничего"; }
+      const v = nm(c.targets[0]);
+      let r = E(c.iter, 9);
+      if (c.cond) r += ".отфильтруй(функция(" + v + ") => " + E(c.cond) + ")";
+      return r + "." + how + "(функция(" + v + ") => " + E(c.e) + ")";
     }
     function call(e) {
+      if (e.t === "call" && e.fn.t === "name" && e.fn.v === "print" && from === "python" && e.kw && e.kw.some((k) => k.name === "file" && k.value.t === "attr" && k.value.name === "stderr")) {
+        e = { ...e, kw: e.kw.filter((k) => k.name !== "file"), fn: { t: "name", v: "\u0001warn" } };
+      }
+      if (e.fn.t === "name" && e.fn.v === "\u0001warn") return "\u0001" + e.args.map((x) => E(x)).join(", ");
       const a = e.args.map((x) => E(x));
       const f = e.fn;
       if (e.kw && e.kw.length) {
@@ -695,7 +747,20 @@
               return "от(" + a[0] + ", " + E(rangeEnd(r[1], r[2])) + ", " + a[2] + ")";
             }
             case "super": return "родитель";
-            case "isinstance": case "type": case "enumerate": case "zip": case "open": case "map": case "filter": pnote("функция Python «" + n + "» не переводится точно"); break;
+            case "isinstance": return isinst(e.args);
+            case "enumerate": if (e.args.length === 1) return "нумеруй(" + a[0] + ")"; break;
+            case "zip": if (e.args.length === 2) return "попарно(" + a.join(", ") + ")"; break;
+            case "set": return "множество(" + (a[0] || "") + ")";
+            case "frozenset": return "множество(" + (a[0] || "") + ")";
+            case "chr": return "символ(" + a[0] + ")";
+            case "ord": return "код(" + a[0] + ")";
+            case "exit": case "quit": return "выход(" + (a[0] || "") + ")";
+            case "divmod": return "[нацело(" + a.join(", ") + "), " + E(e.args[0], 6) + " % " + E(e.args[1], 7) + "]";
+            case "pow": if (e.args.length === 2) return "степень(" + a.join(", ") + ")"; break;
+            case "reversed": return E(e.args[0], 9) + ".перевёрнуто()";
+            case "any": if (e.args[0] && e.args[0].t === "comp") return compPred(e.args[0], "любой"); return E(e.args[0], 9) + ".любой(x => x)";
+            case "all": if (e.args[0] && e.args[0].t === "comp") return compPred(e.args[0], "все"); return E(e.args[0], 9) + ".все(x => x)";
+            case "type": case "open": case "map": case "filter": pnote("функция Python «" + n + "» не переводится точно"); break;
           }
         }
         if (from === "javascript") {
@@ -706,6 +771,7 @@
             case "String": return "строка(" + a[0] + ")";
             case "Boolean": return "логическое(" + a[0] + ")";
             case "__typeof": pnote("typeof переведён как тип(): названия типов будут русскими"); return "тип(" + a[0] + ")";
+            case "isinstance": return isinst(e.args);
             case "super": return "родитель";
           }
         }
@@ -713,13 +779,21 @@
       }
       if (f.t === "attr") {
         const o = f.obj;
-        if (from === "javascript" && o.t === "name" && o.v === "console" && ["log", "info", "error", "warn"].includes(f.name)) return "\u0000" + a.join(", ");
+        if (from === "javascript" && o.t === "name" && o.v === "console" && ["log", "info"].includes(f.name)) return "\u0000" + a.join(", ");
+        if (from === "javascript" && o.t === "name" && o.v === "console" && ["error", "warn"].includes(f.name)) return "\u0001" + a.join(", ");
+        if (o.t === "name" && (o.v === "sys" || o.v === "process") && f.name === "exit") return "выход(" + (a[0] || "") + ")";
+        if (o.t === "name" && (o.v === "json" || o.v === "JSON") && ["dumps", "stringify"].includes(f.name)) return "в_json(" + a[0] + ")";
+        if (o.t === "name" && (o.v === "json" || o.v === "JSON") && ["loads", "parse"].includes(f.name)) return "из_json(" + a[0] + ")";
+        if (from === "javascript" && o.t === "name" && o.v === "String" && f.name === "fromCharCode" && a.length === 1) return "символ(" + a[0] + ")";
+        if (from === "javascript" && f.name === "charCodeAt" && !userMethodNames.has(f.name)) return "код(" + E(o, 9) + "[" + (a[0] || "0") + "])";
         if (o.t === "name" && (o.v === "Math" || o.v === "math")) {
           if (f.name === "random") return "случайное()";
           const m = { sqrt: "корень", abs: "модуль", round: "округли", max: "макс", min: "мин", pow: "степень", trunc: "целое" }[f.name];
           if (m) return m + "(" + a.join(", ") + ")";
-          if (f.name === "floor") { pnote("floor переведён через целое(): для отрицательных чисел результат может отличаться"); return "целое(" + a[0] + ")"; }
-          if (f.name === "ceil") { pnote("ceil переведён приближённо"); return "-целое(-" + E(e.args[0], 7) + ")"; }
+          if (f.name === "floor") return "вниз(" + a[0] + ")";
+          if (f.name === "ceil") return "вверх(" + a[0] + ")";
+          const m2 = { tan: "тангенс", atan: "арктангенс", atan2: "арктангенс", exp: "экспонента", sin: "синус", cos: "косинус", log: "логарифм" }[f.name];
+          if (m2) return m2 + "(" + a.join(", ") + ")";
         }
         if (from === "python" && o.t === "name" && o.v === "random") {
           if (f.name === "randint") return "случайное(" + a.join(", ") + ")";
@@ -736,6 +810,7 @@
           return "родитель." + m + "(" + a.join(", ") + ")";
         }
         if (from === "python" && f.name === "join" && e.args.length === 1) return E(e.args[0], 9) + ".соедини(" + E(o) + ")";
+        if (/^__пон_/.test(f.name)) return E(o, 9) + "." + f.name.slice(6) + "(" + a.join(", ") + ")";
         if (f.name === "__получи" || f.name === "__убери") return E(o, 9) + "." + f.name.slice(2) + "(" + a.join(", ") + ")";
         if (from === "javascript" && f.name === "join" && o.t === "call" && o.fn.t === "attr" && o.fn.name === "map" && o.args[0] && o.args[0].t === "lambda" && o.args[0].body.t === "call" && o.args[0].body.fn.v === "показать") return E(o.fn.obj, 9) + ".соедини(" + a.join(", ") + ")";
         const isSelf = o.t === "name" && o.v === "self";
@@ -751,11 +826,43 @@
         if (from === "javascript" && f.name === "toFixed") return "округли(" + E(o) + ", " + (a[0] || "0") + ")";
         if (!isSelf && !userMethodNames.has(f.name)) pnote("функция «" + f.name + "» оставлена без изменений — в «Понятном» её может не быть");
         const mname = f.name === "__str__" || f.name === "toString" ? "строкой" : f.name;
-        return (isSelf ? "это" : E(o, 9)) + (f.safe ? "?." : ".") + mname + "(" + a.join(", ") + ")";
+        return (isSelf ? "это" : E(o, 9)) + (f.safe ? "?." : ".") + mem(mname) + "(" + a.join(", ") + ")";
       }
       return E(f, 9) + "(" + a.join(", ") + ")";
     }
 
+    function handlerOut(type, errName, body, typed) {
+      emit("если ошибка " + (type ? nm(type) : "Ошибка") + (errName ? " как " + nm(errName) : ""));
+      let h = body;
+      if (errName && !typed) {
+        const n = errName;
+        const fix = (x) => {
+          if (Array.isArray(x)) return x.map(fix);
+          if (!x || typeof x !== "object") return x;
+          if (x.t === "attr" && (x.name === "message" || x.name === "Message") && x.obj.t === "name" && x.obj.v === n) return { t: "name", v: n };
+          if (x.t === "call" && x.fn.t === "attr" && x.fn.name === "getMessage" && x.fn.obj.t === "name" && x.fn.obj.v === n && !x.args.length) return { t: "name", v: n };
+          if (x.t === "call" && x.fn.t === "name" && x.fn.v === "str" && x.args.length === 1 && x.args[0].t === "name" && x.args[0].v === n) return { t: "name", v: n };
+          const o = {};
+          for (const k of Object.keys(x)) o[k] = fix(x[k]);
+          return o;
+        };
+        h = fix(h);
+        pnote("тексты встроенных ошибок в «Понятном» другие");
+      } else if (errName && typed) {
+        const n = errName;
+        const fix = (x) => {
+          if (Array.isArray(x)) return x.map(fix);
+          if (!x || typeof x !== "object") return x;
+          if (x.t === "attr" && (x.name === "message" || x.name === "Message") && x.obj.t === "name" && x.obj.v === n) return { t: "attr", obj: x.obj, name: "сообщение" };
+          if (x.t === "call" && x.fn.t === "attr" && x.fn.name === "getMessage" && x.fn.obj.t === "name" && x.fn.obj.v === n && !x.args.length) return { t: "attr", obj: x.fn.obj, name: "сообщение" };
+          const o = {};
+          for (const k of Object.keys(x)) o[k] = fix(x[k]);
+          return o;
+        };
+        h = fix(h);
+      }
+      inner(h);
+    }
     function stmtWrap(s) {
       const at = lines.length;
       const startInd = ind;
@@ -774,6 +881,7 @@
     function exprStmt(e) {
       const c = E(e);
       if (c[0] === "\u0000") return "пиши" + (c.length > 1 ? " " + c.slice(1) : "");
+      if (c[0] === "\u0001") return "предупреди" + (c.length > 1 ? " " + c.slice(1) : "");
       return c;
     }
     function assignName(n, op, v, decl) {
@@ -801,6 +909,20 @@
             return;
           }
           const t = s.targets[0];
+          if ((t.t === "tuple" || t.t === "list") && s.op === "=" && t.items.length > 1 && t.items.every((x) => ["name", "index", "attr"].includes(x.t))) {
+            const sc = cur();
+            const names = t.items.filter((x) => x.t === "name").map((x) => x.v);
+            const canDecl = (n) => !sc.declared.has(n) && !sc.globals.has(n) && (from === "python" || s.decl);
+            const rhs = s.value.t === "tuple" || s.value.t === "list" ? s.value.items.map((x) => E(x)).join(", ") : E(s.value);
+            if (names.length === t.items.length && names.every(canDecl) && new Set(names).size === names.length) {
+              names.forEach((n) => sc.declared.add(n));
+              emit((s.decl === "const" ? "конст " : "пусть ") + names.map(nm).join(", ") + " = " + rhs);
+              return;
+            }
+            for (const n of names) if (canDecl(n)) { sc.declared.add(n); emit("пусть " + nm(n) + " = ничего"); }
+            emit(t.items.map((x) => E(x)).join(", ") + " = " + rhs);
+            return;
+          }
           if (t.t === "tuple" || t.t === "list") {
             const tmpName = "_временно" + (lines.length + 1);
             pnote("множественное присваивание переведено через временный список");
@@ -809,6 +931,9 @@
             return;
           }
           let op = s.op, value = s.value;
+          const BIT_ASSIGN = { "&=": "&", "|=": "|", "^^=": "^^", "<<=": "<<", ">>=": ">>", ">>>=": ">>>" };
+          if (from === "python" && op === "^=") op = "^^=";
+          if (BIT_ASSIGN[op]) { value = { t: "bin", op: BIT_ASSIGN[op], l: t, r: s.value }; op = "="; }
           if (!["=", "+=", "-=", "*=", "/=", "%=", "**=", "^=", "//="].includes(op)) { pnote("присваивание «" + op + "» не переводится"); return; }
           if (op === "**=" || op === "^=") { op = "="; value = { t: "bin", op: "^", l: t, r: s.value }; }
           if (op === "//=") { op = "="; value = { t: "bin", op: "//", l: t, r: s.value }; }
@@ -826,6 +951,32 @@
           return;
         }
         case "while": emit("пока " + E(s.test)); inner(s.body); emit("конец"); return;
+        case "dowhile": emit("делай"); inner(s.body); emit("конец пока " + E(s.test)); return;
+        case "assert": emit("убедись " + E(s.test) + (s.msg ? ", " + E(s.msg) : "")); return;
+        case "del":
+          for (const it of s.items) {
+            if (it.t === "index") emit(E(it.obj, 9) + ".убери(" + E(it.index) + ")");
+            else if (it.t === "attr") emit(E(it.obj, 9) + ".убери(" + str(it.name) + ")");
+            else pnote("del переменной не переводится: в «Понятном» переменные не удаляются");
+          }
+          return;
+        case "enum": {
+          emit("перечисление " + nm(s.name));
+          ind++;
+          for (const it of s.items) emit(nm(it.name) + (it.value ? " = " + E(it.value) : ""));
+          ind--;
+          emit("конец");
+          return;
+        }
+        case "iface": {
+          emit("интерфейс " + nm(s.name));
+          ind++;
+          for (const m of s.methods) emit("функция " + nm(m.name) + "(" + m.params.filter((q) => !q.rest).map((q) => nm(q.name)).join(", ") + ")");
+          ind--;
+          emit("конец");
+          return;
+        }
+        case "struct": emit("структура " + nm(s.name) + "(" + s.fields.map((f) => (typeof f === "string" ? nm(f) + " = ничего" : nm(f.name) + " = " + (f.value ? E(f.value) : "ничего"))).join(", ") + ")"); return;
         case "forRange": emit("для " + nm(s.v) + " от " + E(s.from) + " до " + E(s.to) + (s.step ? " шаг " + E(s.step) : s.down ? "" : " шаг 1")); inner(s.body); emit("конец"); return;
         case "for": {
           const it = s.iter;
@@ -842,7 +993,16 @@
             else if (it.t === "call" && it.fn.t === "name" && it.fn.v === "enumerate") iter = it.args[0];
             else if (it.t === "call" && it.fn.t === "attr" && it.fn.obj.v === "Object" && it.fn.name === "entries") iter = it.args[0];
             else if (it.t === "call" && it.fn.t === "attr" && it.fn.name === "entries") iter = it.fn.obj;
-            else pnote("перебор пар переведён приближённо");
+            else {
+              const pv = "_пара" + (lines.length + 1);
+              emit("для каждого " + pv + " из " + E(it));
+              ind++;
+              emit("пусть " + nm(s.targets[0]) + ", " + nm(s.targets[1]) + " = " + pv);
+              ind--;
+              inner(s.body);
+              emit("конец");
+              return;
+            }
             emit("для каждого " + nm(s.targets[0]) + ", " + nm(s.targets[1]) + " из " + E(iter));
           } else if (s.targets.length === 1) emit("для каждого " + nm(s.targets[0]) + " из " + E(it));
           else { pnote("цикл с " + s.targets.length + " переменными не переводится"); emit("для каждого _элемент из " + E(it)); }
@@ -854,10 +1014,16 @@
           let params = s.params.filter((q) => !q.rest);
           if (s.params.some((q) => q.rest)) pnote("параметры *args/**kwargs и «...» не переводятся");
           const inCls = !!classCtx;
-          if (inCls && params.length && params[0].name === "self") params = params.slice(1);
-          const name = inCls && s.name === "__init__" ? "создать" : inCls && s.name === "__str__" ? "строкой" : s.name;
-          if (/^__.+__$/.test(s.name) && !["__init__", "__str__"].includes(s.name)) pnote("особый метод «" + s.name + "» не имеет аналога в «Понятном»");
-          emit("функция " + nm(name) + "(" + params.map((q) => nm(q.name) + (q.def ? " = " + E(q.def) : "")).join(", ") + ")");
+          if (inCls && params.length && (params[0].name === "self" || (s.isStatic && params[0].name === "cls"))) params = params.slice(1);
+          let name = inCls && s.name === "__init__" ? "создать" : inCls && (s.name === "__str__" || s.name === "__repr__") ? "строкой" : s.name;
+          if (/^__.+__$/.test(s.name) && !["__init__", "__str__", "__repr__"].includes(s.name)) pnote("особый метод «" + s.name + "» не имеет аналога в «Понятном»");
+          const priv = inCls && (s.isPrivate || (/^__/.test(s.name) && !/__$/.test(s.name)));
+          if (inCls) name = mem(name);
+          const mods = (inCls && s.isStatic ? "общая " : "") + (priv ? "скрытая " : "");
+          const plist = "(" + params.map((q) => nm(q.name) + (q.def ? " = " + E(q.def) : "")).join(", ") + ")";
+          if (inCls && s.isAbstract && !s.body.some((b) => b.t !== "pass" && !(b.t === "expr" && b.e.t === "str") && b.t !== "raise")) { emit(mods + "абстрактная функция " + (inCls ? name : nm(name)) + plist); return; }
+          if (inCls && s.isGetter && !params.length) emit(mods + "свойство " + name);
+          else emit(mods + "функция " + (inCls ? name : nm(name)) + plist);
           ind++;
           const globals = new Set();
           walkStmts(s.body, (b) => { if (b.t === "global") b.names.forEach((n) => globals.add(n)); });
@@ -876,31 +1042,22 @@
         case "continue": emit("дальше"); return;
         case "raise": {
           let v = s.value;
-          if (v && v.t === "call" && v.fn.t === "name" && /(Error|Exception)$/.test(v.fn.v)) v = v.args[0] || { t: "str", v: v.fn.v };
+          if (v && v.t === "call" && v.fn.t === "name" && /(Error|Exception)$/.test(v.fn.v) && !classNames.has(v.fn.v)) v = v.args[0] || { t: "str", v: v.fn.v };
           emit("брось " + (v ? E(v) : "\"ошибка\""));
           return;
         }
         case "try": {
           emit("пробуй");
           inner(s.body);
-          if (s.handler) {
-            emit("если ошибка" + (s.errName ? " как " + nm(s.errName) : ""));
-            let h = s.handler;
-            if (s.errName) {
-              const n = s.errName;
-              const fix = (x) => {
-                if (Array.isArray(x)) return x.map(fix);
-                if (!x || typeof x !== "object") return x;
-                if (x.t === "attr" && x.name === "message" && x.obj.t === "name" && x.obj.v === n) return { t: "name", v: n };
-                if (x.t === "call" && x.fn.t === "name" && x.fn.v === "str" && x.args.length === 1 && x.args[0].t === "name" && x.args[0].v === n) return { t: "name", v: n };
-                const o = {};
-                for (const k of Object.keys(x)) o[k] = fix(x[k]);
-                return o;
-              };
-              h = fix(h);
-              pnote("тексты встроенных ошибок в «Понятном» другие");
-            }
-            inner(h);
+          const hs = s.handlers || (s.handler ? [{ types: [], errName: s.errName, body: s.handler }] : []);
+          for (let hi = 0; hi < hs.length; hi++) {
+            const hh = hs[hi];
+            const user = hh.types.filter((x) => x && classNames.has(x));
+            const all = !hh.types.length || user.length < hh.types.length;
+            if (all && hh.types.length) pnote("тип ошибки «" + hh.types.filter((x) => !user.includes(x)).join(", ") + "» переведён как любая ошибка");
+            const heads = all ? [null] : user;
+            for (const ty of heads) handlerOut(ty, hh.errName, hh.body, ty !== null);
+            if (all) { if (hi < hs.length - 1) pnote("следующие блоки обработки ошибок не переведены: ошибку уже ловит общий блок"); break; }
           }
           if (s.fin) { emit("наконец"); inner(s.fin); }
           emit("конец");
@@ -916,13 +1073,18 @@
           return;
         }
         case "class": {
-          emit("класс " + nm(s.name) + (s.parent ? " наследует " + nm(s.parent) : ""));
+          let parent = s.parent;
+          if (parent && !classNames.has(parent) && /(Exception|Error|Throwable)$/.test(parent)) parent = "Ошибка";
+          if (parent === "object" || parent === "Object") parent = null;
+          const ifs = (s.ifaces || []).filter((x) => ifaceNames.has(x));
+          if ((s.ifaces || []).length > ifs.length) pnote("интерфейсы «" + s.ifaces.filter((x) => !ifaceNames.has(x)).join(", ") + "» объявлены не в этом файле и не указаны");
+          emit("класс " + nm(s.name) + (parent ? " наследует " + (parent === "Ошибка" ? parent : nm(parent)) : "") + (ifs.length ? " реализует " + ifs.map(nm).join(", ") : ""));
           ind++;
           const saved = classCtx;
           classCtx = s;
           for (const m of s.body) {
             if (m.t === "def") stmtWrap(m);
-            else if (m.t === "assign" && m.targets[0].t === "name") emit("пусть " + nm(m.targets[0].v) + " = " + E(m.value));
+            else if (m.t === "assign" && m.targets[0].t === "name") emit((m.isStatic ? "общая " : "") + (m.isPrivate || /^__[^_]/.test(m.targets[0].v) ? "скрытая " : "") + "пусть " + mem(m.targets[0].v) + " = " + E(m.value));
             else if (m.t === "note") pnote(m.text);
             else if (m.t !== "pass" && !(m.t === "expr" && m.e.t === "str")) pnote("в теле класса переводятся только функции и поля");
           }

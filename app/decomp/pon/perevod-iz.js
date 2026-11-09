@@ -155,6 +155,7 @@
     function E(e, prec) {
       prec = prec || 0;
       switch (e.k) {
+        case "raw": return e.js || "None";
         case "num": return L === "csharp" && Number.isInteger(e.v) ? e.v + ".0" : String(e.v);
         case "str": return JSON.stringify(e.v);
         case "bool": return L === "python" ? (e.v ? "True" : "False") : e.v ? "true" : "false";
@@ -236,6 +237,8 @@
         if (L === "javascript") return isDictLike(e.r) ? wrap(l + " in " + r, prec, p) : E(e.r, 10) + ".includes(" + E(e.l) + ")";
         return isDictLike(e.r) ? E(e.r, 10) + ".ContainsKey(" + E(e.l) + ")" : E(e.r, 10) + ".Contains(" + E(e.l) + ")";
       }
+      if (e.op === "*" && L !== "python" && e.l.k === "list") return L === "javascript" ? "Array(Math.max(0, Math.floor(" + E(e.r) + "))).fill(" + E(e.l) + ").flat()" : "Enumerable.Repeat(" + E(e.l) + ", (int)(" + E(e.r) + ")).SelectMany(x => x).ToList()";
+      if (e.op === "*" && L !== "python" && e.l.k === "str") return L === "javascript" ? E(e.l, 10) + ".repeat(" + E(e.r) + ")" : "string.Concat(Enumerable.Repeat(" + E(e.l) + ", (int)(" + E(e.r) + ")))";
       if (e.op === "^") return L === "python" ? wrap(l + " ** " + r, prec, p) : L === "javascript" ? wrap(l + " ** " + r, prec, p) : "Math.Pow(" + E(e.l) + ", " + E(e.r) + ")";
       if (e.op === "/" && L !== "python") note(e, "деление на ноль в " + (L === "javascript" ? "JavaScript" : "C#") + " не вызывает ошибку, как в «Понятном»");
       if (e.op === "%" && L !== "python") note(e, "остаток от деления отрицательных чисел в " + (L === "javascript" ? "JavaScript" : "C#") + " считается иначе, чем в «Понятном»");
@@ -473,7 +476,35 @@
           emit(t + " " + s.op + " " + v + (L === "python" ? "" : ";"));
           return;
         }
+        case "dowhile":
+          if (L === "python") { emit("while True:"); inner(s.body); ind++; emit("if not (" + E(s.cond) + "):"); ind++; emit("break"); ind -= 2; return; }
+          emit("do {"); inner(s.body); emit("} while (" + E(s.cond) + ");");
+          return;
+        case "multilet": case "multiassign": {
+          const names = s.k === "multilet" ? s.names.map(nm) : s.parts.map((pt) => (pt.target.k === "name" ? nm(pt.target.name) : E(pt.target)));
+          const v = s.value.k === "list" ? s.value.items.map((x) => E(x)).join(", ") : E(s.value);
+          if (L === "python") { emit(names.join(", ") + " = " + v); return; }
+          if (L === "javascript") { emit((s.k === "multilet" ? (s.kind === "let" ? "let " : "const ") : "") + "[" + names.join(", ") + "] = [" + v + "];"); return; }
+          emit("var __t" + (++tmp) + " = new List<dynamic> { " + v + " };");
+          names.forEach((n, i) => emit((s.k === "multilet" ? "dynamic " : "") + n + " = __t" + tmp + "[" + i + "];"));
+          return;
+        }
+        case "assert":
+          if (L === "python") emit("assert " + E(s.cond) + (s.msg ? ", " + E(s.msg) : ""));
+          else if (L === "javascript") emit("if (!(" + E(s.cond) + ")) throw new Error(" + (s.msg ? E(s.msg) : "\"проверка не прошла\"") + ");");
+          else emit("if (!(" + E(s.cond) + ")) throw new Exception(" + (s.msg ? E(s.msg) : "\"проверка не прошла\"") + ");");
+          return;
+        case "enum": {
+          let last = -1;
+          const items = s.items.map((it) => { let v; if (it.value) { v = E(it.value); if (it.value.k === "num") last = it.value.v; } else v = String(++last); return [it.name, v]; });
+          if (L === "python") emit(nm(s.name) + " = {" + items.map(([k, v]) => JSON.stringify(k) + ": " + v).join(", ") + "}");
+          else if (L === "javascript") emit("const " + nm(s.name) + " = Object.freeze({ " + items.map(([k, v]) => JSON.stringify(k) + ": " + v).join(", ") + " });");
+          else emit("dynamic " + nm(s.name) + " = new Dictionary<string, dynamic> { " + items.map(([k, v]) => "{ " + JSON.stringify(k) + ", " + v + " }").join(", ") + " };");
+          return;
+        }
+        case "iface": note(s, "интерфейс «" + s.name + "» не переведён: в " + L + " проверка «реализует» не выполняется"); return;
         case "print": {
+          if (s.err) note(s, s.err === "warn" ? "«предупреди» переведено как обычный вывод" : "«отладка» переведена как обычный вывод");
           const a = s.items.map((x) => E(x)).join(", ");
           emit(L === "python" ? "напиши(" + a + ")" : L === "javascript" ? "напиши(" + a + ");" : "Помощь.Напиши(" + a + ");");
           return;

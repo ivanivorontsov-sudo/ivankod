@@ -39,3 +39,54 @@ test('decompyle3: Python 3.8 .pyc → Python → Понятный',{skip:!(TOOLS
  const pyc=path.join(tmp,'prog.pyc'); assert.strictEqual(cp.spawnSync(PY38,['-c','import py_compile,sys;py_compile.compile(sys.argv[1],cfile=sys.argv[2],doraise=True)',s,pyc]).status,0); fs.chmodSync(pyc,0o644);
  const r=await D.decompile(pyc,opts()); assert.ok(r.ok,r.error); const p=fs.readFileSync(r.ponFile,'utf8'); assert.match(p,/функция double\(x\)/,p); assert.match(p,/пиши double\(i\)/,p) });
 test('машинный код без Ghidra: честно просит скачать Ghidra',{skip:!has('gcc')&&'нет gcc'},async()=>{ const c=path.join(tmp,'n.c'), o=path.join(tmp,'n.elf'); fs.writeFileSync(c,'int main(){return 0;}'); cp.spawnSync('gcc',[c,'-o',o]); const r=await D.decompile(o,opts({env:D.makeEnv({root:path.join(tmp,'empty'),log(){}})})); assert.strictEqual(r.ok,false); assert.strictEqual(r.need,'ghidra') });
+
+const SDIR=path.join(__dirname,'fixtures','decomp');
+const wantOut={
+ java:['10','6','шесть','2','7','5','16','64','-1','3','11','9','1','истина','ПРИВЕТ','При','р','6','истина','2','20','истина','1','истина','ок','конец','6','красн','120','число 9'],
+ csharp:['10','6','шесть','2','7','5','16','64','-1','3','11','9','1','истина','ПРИВЕТ','При','р','6','истина','2','20','истина','1','истина','ок','конец','6','красн','120','привет Иван'],
+ c:['10','6','шесть','2','7','5','16','64','-1','3','11','7','2','красн','6','120'],
+ python:['10','6','2 7 5 16 64 -1 3','11','120','в поток ошибок']
+};
+const wantWords={
+ java:[/интерфейс Фигура/,/перечисление Цвет/,/реализует Фигура/,/скрытая пусть тайна/,/общая функция сколько/,/делай/,/выбор k/,/бит_и\(6, 3\)/,/экземпляр\(кв, Основа\)/,/предупреди "в поток ошибок"/,/убедись x > 0/,/родитель.создать\("квадрат"\)/,/это.сторона/,/m.есть\("a"\)/],
+ csharp:[/интерфейс I_Фигура/,/перечисление Цвет/,/реализует I_Фигура/,/скрытая пусть тайна/,/делай/,/выбор k/,/бит_и\(6, 3\)/,/экземпляр\(кв, Основа\)/,/предупреди "в поток ошибок"/,/родитель.создать\("квадрат"\)/,/"привет \{имя\}"/],
+ c:[/структура Точка\(x = 0, y = 0\)/,/структура Круг\(r = 0\)/,/конст КРАСНЫЙ = 0/,/конст N = 5/,/делай/,/выбор k/,/бит_и\(6, 3\)/,/предупреди "в поток ошибок"/,/выход\(main\(\)\)/],
+ python:[/класс ОшибкаВвода наследует Ошибка/,/бит_и\(6, 3\)/,/нацело\(7, 2\)/,/предупреди "в поток ошибок"/]
+};
+
+test('универсальный перевод Java/C#/C/Python в Понятный 2.4: проверка языка, стандартные слова и тот же вывод',async()=>{
+ for(const [lang,file] of [['java','Demo.java'],['csharp','Demo.cs'],['c','demo.c'],['python','demo.py']]){
+  const src=fs.readFileSync(path.join(SDIR,file),'utf8');
+  const r=await TP.translate(src,lang);
+  assert.ok(!r.check,lang+': '+r.check+'\n'+r.code);
+  assert.doesNotMatch(r.code,/паника|кричи |харэ|аминь|караул/,lang+': шуточные слова не должны попадать в перевод');
+  assert.doesNotMatch(r.code,/конструкция «|выражение «[A-Za-z]+» не переводится|switch не переводится автоматически/,lang+':\n'+r.code);
+  for(const re of wantWords[lang]) assert.match(r.code,re,lang+' нет '+re+'\n'+r.code);
+  const err=[]; const out=Y.run(r.code,{writeErr:s=>err.push(s)});
+  assert.deepStrictEqual(out,wantOut[lang],lang+' stdout\n'+r.code);
+  assert.deepStrictEqual(err,['в поток ошибок'],lang+' stderr');
+ }
+});
+
+test('указатели, sizeof и goto в C остаются комментариями',async()=>{
+ const r=await TP.translate('int main(void){ int x=1; int *p=&x; printf("%zu\\n", sizeof(x)); goto e; e: return 0; }','c');
+ assert.match(r.code,/#.*указател/);
+ assert.match(r.code,/#.*sizeof/);
+ assert.match(r.code,/#.*goto/);
+});
+
+test('ссылка на метод Java и анонимный класс остаются комментариями',async()=>{
+ const r=await TP.translate('class A { void f(java.util.List<Integer> xs){ xs.forEach(System.out::println); new Runnable(){ public void run(){} }; } }','java');
+ assert.match(r.code,/#.*(ссылка на метод|анонимный класс|не переводится)/);
+});
+
+test('Scanner, ReadLine и System.exit переводятся во встроенные слова',async()=>{
+ const j=await TP.translate('class A { public static void main(String[] a){ java.util.Scanner s=new java.util.Scanner(System.in); int n=s.nextInt(); System.out.println(n); System.exit(2); } }','java');
+ assert.match(j.code,/спроси/);
+ assert.match(j.code,/выход\(2\)/);
+ assert.ok(!j.check,j.check);
+ const c=await TP.translate('class P { static void Main(){ string t=Console.ReadLine(); Console.WriteLine(t); Environment.Exit(1); } }','csharp');
+ assert.match(c.code,/спроси/);
+ assert.match(c.code,/выход\(1\)/);
+ assert.ok(!c.check,c.check);
+});
