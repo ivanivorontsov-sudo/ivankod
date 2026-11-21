@@ -79,7 +79,8 @@
           "from": "bin/ponyatny-linux",
           "to": "ponyatny/ponyatny-linux"
         }
-      ]
+      ],
+      "maintainer": "Воронцов Иван Игоревич <ivanivorontsov-sudo@users.noreply.github.com>"
     },
     "deb": {
       "packageName": "ivancode"
