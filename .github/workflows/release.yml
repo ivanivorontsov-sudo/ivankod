@@ -90,7 +90,7 @@ jobs:
       - run: npm test
       - name: Web chat latency on mock sites
         run: |
-          xvfb-run -a bash -c 'WEBSIM_OUT=websim-result.json npx electron scripts/websim/main.js'
+          xvfb-run -a bash -c 'WEBSIM_OUT=websim-result.json npx electron --no-sandbox scripts/websim/main.js'
           node -e "const r=require('./websim-result.json');let bad=0;for(const[k,v]of Object.entries(r)){console.log(k,JSON.stringify(v.runs.map(x=>({ready:x.ready,sent:x.sent,done:x.done,ok:x.ok}))));if(!v.sameChat||v.userMsgs!==3||v.runs.some(x=>!x.ok||x.sent-x.ready>2000||x.done>20000))bad++}process.exit(bad?1:0)"
       - name: Installer
         run: npx electron-builder --linux ${{ matrix.targets }} --publish never
@@ -145,8 +145,12 @@ jobs:
         run: npx electron-builder --mac dmg zip --publish never
       - name: Packed compiler
         run: |
-          app=$(ls -d dist/mac*/ИванКод.app dist/mac/ИванКод.app 2>/dev/null | head -1)
+          find dist -maxdepth 3 \( -name '*.app' -o -name '*.dmg' -o -name '*.zip' \) -print
+          app=$(find dist -maxdepth 2 -name '*.app' -type d | head -1)
+          echo "APP=$app"
           test -n "$app"
+          test -d "$app/Contents/Resources/ponyatny"
+          ls -la "$app/Contents/Resources/ponyatny"
           test -x "$app/Contents/Resources/ponyatny/ponyatny-macos"
           "$app/Contents/Resources/ponyatny/ponyatny-macos" версия
           plutil -p "$app/Contents/Info.plist" | tee /tmp/ivk-plist.txt
