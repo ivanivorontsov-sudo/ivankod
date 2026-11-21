@@ -14,7 +14,7 @@
     "check": "node -e \"for(const f of require('fs').readdirSync('app').filter(f=>f.endsWith('.js')))require('child_process').execFileSync(process.execPath,['--check','app/'+f])\"",
     "dist": "electron-builder --win nsis portable",
     "dist:dir": "electron-builder --win --dir",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/**/*.test.js"
   },
   "devDependencies": {
     "electron": "33.4.11",
