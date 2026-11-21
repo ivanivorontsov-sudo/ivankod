@@ -35,10 +35,150 @@ jobs:
           node -e "const r=require('./websim-result.json');let bad=0;for(const[k,v]of Object.entries(r)){console.log(k,JSON.stringify(v.runs.map(x=>({ready:x.ready,sent:x.sent,done:x.done,ok:x.ok}))));if(!v.sameChat||v.userMsgs!==3||v.runs.some(x=>!x.ok||x.sent-x.ready>2000||x.done>20000))bad++}process.exit(bad?1:0)"
       - name: Installer
         shell: bash
-        run: npx electron-builder --win nsis --publish never
+        run: npx electron-builder --win nsis portable --publish never
+      - name: Packed compiler
+        shell: bash
+        run: test -f dist/win-unpacked/resources/ponyatny/ponyatny.exe
       - name: Upload to release
         if: ${{ inputs.release != '' }}
         shell: bash
         run: |
-          f=$(ls dist/IvanCode-Setup-*.exe | head -1)
-          gh release upload "${{ inputs.release }}" "$f" --clobber -R ${{ github.repository }}
+          gh release view "${{ inputs.release }}" -R ${{ github.repository }} >/dev/null || gh release create "${{ inputs.release }}" --title "ИванКод ${{ inputs.release }}" -R ${{ github.repository }}
+          gh release upload "${{ inputs.release }}" dist/IvanCode-Setup-*.exe dist/IvanCode-Portable-*.exe --clobber -R ${{ github.repository }}
+
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            targets: AppImage deb
+          - os: ubuntu-24.04-arm
+            targets: AppImage
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: Linux libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnotify4 libnss3 libxss1 libasound2t64 libxtst6 libgbm1 libfuse2 fakeroot dpkg
+      - uses: actions/checkout@v4
+        if: ${{ matrix.os == 'ubuntu-24.04-arm' }}
+        with:
+          repository: ivanivorontsov-sudo/ponyatny
+          ref: v2.6.0
+          path: ponyatny-src
+      - name: Ponyatny compiler
+        run: |
+          mkdir -p bin
+          if [ "$(uname -m)" = x86_64 ]; then
+            gh release download toolchain -R ${{ github.repository }} --clobber -p ponyatny-linux -p SHA256SUMS.txt -D bin
+            (cd bin && grep ' ponyatny-linux$' SHA256SUMS.txt | sha256sum -c - && chmod +x ponyatny-linux)
+            ./bin/ponyatny-linux версия
+          else
+            (cd ponyatny-src && npm ci)
+            bash scripts/build-ponyatny-sea.sh "$PWD/bin/ponyatny-linux" "$PWD/ponyatny-src"
+          fi
+      - run: npm run check
+      - run: npm test
+      - name: Web chat latency on mock sites
+        run: |
+          xvfb-run -a bash -c 'WEBSIM_OUT=websim-result.json npx electron scripts/websim/main.js'
+          node -e "const r=require('./websim-result.json');let bad=0;for(const[k,v]of Object.entries(r)){console.log(k,JSON.stringify(v.runs.map(x=>({ready:x.ready,sent:x.sent,done:x.done,ok:x.ok}))));if(!v.sameChat||v.userMsgs!==3||v.runs.some(x=>!x.ok||x.sent-x.ready>2000||x.done>20000))bad++}process.exit(bad?1:0)"
+      - name: Installer
+        run: npx electron-builder --linux ${{ matrix.targets }} --publish never
+      - name: Packed compiler
+        run: |
+          unpacked=$(ls -d dist/linux-unpacked dist/linux-arm64-unpacked 2>/dev/null | head -1)
+          test -n "$unpacked"
+          test -x "$unpacked/resources/ponyatny/ponyatny-linux"
+          "$unpacked/resources/ponyatny/ponyatny-linux" версия
+      - name: Upload to release
+        if: ${{ inputs.release != '' }}
+        run: |
+          gh release view "${{ inputs.release }}" -R ${{ github.repository }} >/dev/null || gh release create "${{ inputs.release }}" --title "ИванКод ${{ inputs.release }}" -R ${{ github.repository }}
+          files=$(ls dist/IvanCode-*-linux-*.AppImage dist/IvanCode-*-linux-*.deb 2>/dev/null || true)
+          test -n "$files"
+          gh release upload "${{ inputs.release }}" $files --clobber -R ${{ github.repository }}
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+          - os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/checkout@v4
+        with:
+          repository: ivanivorontsov-sudo/ponyatny
+          ref: v2.6.0
+          path: ponyatny-src
+      - run: npm ci
+      - name: Ponyatny compiler
+        run: |
+          (cd ponyatny-src && npm ci)
+          bash scripts/build-ponyatny-sea.sh "$PWD/bin/ponyatny-macos" "$PWD/ponyatny-src"
+      - run: npm run check
+      - run: npm test
+      - name: Web chat latency on mock sites
+        run: |
+          WEBSIM_OUT=websim-result.json npx electron scripts/websim/main.js
+          node -e "const r=require('./websim-result.json');let bad=0;for(const[k,v]of Object.entries(r)){console.log(k,JSON.stringify(v.runs.map(x=>({ready:x.ready,sent:x.sent,done:x.done,ok:x.ok}))));if(!v.sameChat||v.userMsgs!==3||v.runs.some(x=>!x.ok||x.sent-x.ready>2000||x.done>20000))bad++}process.exit(bad?1:0)"
+      - name: Installer
+        run: npx electron-builder --mac dmg zip --publish never
+      - name: Packed compiler
+        run: |
+          app=$(ls -d dist/mac*/ИванКод.app dist/mac/ИванКод.app 2>/dev/null | head -1)
+          test -n "$app"
+          test -x "$app/Contents/Resources/ponyatny/ponyatny-macos"
+          "$app/Contents/Resources/ponyatny/ponyatny-macos" версия
+          plutil -p "$app/Contents/Info.plist" | tee /tmp/ivk-plist.txt
+          grep -q '1\.5\.1' /tmp/ivk-plist.txt
+      - name: Upload to release
+        if: ${{ inputs.release != '' }}
+        run: |
+          gh release view "${{ inputs.release }}" -R ${{ github.repository }} >/dev/null || gh release create "${{ inputs.release }}" --title "ИванКод ${{ inputs.release }}" -R ${{ github.repository }}
+          files=$(ls dist/IvanCode-*-mac-*.dmg dist/IvanCode-*-mac-*.zip)
+          test -n "$files"
+          gh release upload "${{ inputs.release }}" $files --clobber -R ${{ github.repository }}
+
+  checksums:
+    needs: [windows, linux, macos]
+    if: ${{ always() && inputs.release != '' && needs.windows.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Windows zip and SHA256SUMS
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.release }}"
+          VER="${TAG#v}"
+          mkdir -p assets && cd assets
+          gh release download "$TAG" -R ${{ github.repository }} --clobber
+          rm -f SHA256SUMS.txt "IvanCode-${VER}-Windows.zip"
+          test -f "IvanCode-Setup-${VER}.exe"
+          test -f "IvanCode-Portable-${VER}.exe"
+          zip -9 "IvanCode-${VER}-Windows.zip" "IvanCode-Setup-${VER}.exe" "IvanCode-Portable-${VER}.exe"
+          gh release upload "$TAG" "IvanCode-${VER}-Windows.zip" --clobber -R ${{ github.repository }}
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --clobber -R ${{ github.repository }}

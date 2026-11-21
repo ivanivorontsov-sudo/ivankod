@@ -38,7 +38,8 @@ async function ktBuild(root,o={}){ const h=ktHealEnv(o.env||process.env,{jdk:o.j
 /** прогрев: собрать пустую заготовку, чтобы Gradle скачал плагины и запустил демон (следующие сборки — секунды) */
 async function ktPrewarm(dir,o={}){ fs.mkdirSync(dir,{recursive:true}); ktWrite(dir,'Прогрев',K.DEFAULT_BODY,{sdk:o.sdk}); return ktBuild(dir,o) }
 // ---------- Понятный ----------
-function ponBin(o={}){ const c=[o.bin,process.env.IVANCODE_PON,process.resourcesPath&&path.join(process.resourcesPath,'ponyatny',W?'ponyatny.exe':'ponyatny-linux'),path.join(__dirname,'..','bin',W?'ponyatny.exe':'ponyatny-linux')].filter(Boolean); return c.find(f=>{ try{ return fs.existsSync(f) }catch{ return false } })||null }
+function ponName(){ return W?'ponyatny.exe':process.platform==='darwin'?'ponyatny-macos':'ponyatny-linux' }
+function ponBin(o={}){ const n=ponName(); const c=[o.bin,process.env.IVANCODE_PON,process.resourcesPath&&path.join(process.resourcesPath,'ponyatny',n),path.join(__dirname,'..','bin',n)].filter(Boolean); return c.find(f=>{ try{ return fs.existsSync(f) }catch{ return false } })||null }
 // под wine вывод в канал ломается (EBADF) — для тестов на Linux можно запускать .exe через wine с выводом в файл
 async function ponRun(args,o={}){ const bin=o.bin||ponBin(); if(!bin) return {code:-1,out:'Компилятор «Понятный» не найден в студии',ms:0};
  if(/\.exe$/i.test(bin)&&!W){ const of=path.join(os.tmpdir(),'pon-'+process.pid+'-'+Date.now()+'.txt'); const fd=fs.openSync(of,'w'); const t0=Date.now();

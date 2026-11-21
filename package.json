@@ -1,6 +1,6 @@
 {
   "name": "ivancode",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "ИванКод — студия разработки с ИИ",
   "main": "app/main.js",
   "author": "Воронцов Иван Игоревич",
@@ -14,7 +14,9 @@
     "check": "node -e \"for(const f of require('fs').readdirSync('app').filter(f=>f.endsWith('.js')))require('child_process').execFileSync(process.execPath,['--check','app/'+f])\"",
     "dist": "electron-builder --win nsis portable",
     "dist:dir": "electron-builder --win --dir",
-    "test": "node -e \"const fs=require('fs'),c=require('child_process');const f=fs.readdirSync('test').filter(x=>x.endsWith('.test.js')).map(x=>'test/'+x);c.execFileSync(process.execPath,['--test',...f],{stdio:'inherit'})\""
+    "test": "node -e \"const fs=require('fs'),c=require('child_process');const f=fs.readdirSync('test').filter(x=>x.endsWith('.test.js')).map(x=>'test/'+x);c.execFileSync(process.execPath,['--test',...f],{stdio:'inherit'})\"",
+    "dist:linux": "electron-builder --linux AppImage deb",
+    "dist:mac": "electron-builder --mac dmg zip"
   },
   "devDependencies": {
     "electron": "33.4.11",
@@ -31,11 +33,7 @@
     ],
     "extraResources": [
       "LICENSE.txt",
-      "THIRD-PARTY.txt",
-      {
-        "from": "bin/ponyatny.exe",
-        "to": "ponyatny/ponyatny.exe"
-      }
+      "THIRD-PARTY.txt"
     ],
     "directories": {
       "output": "dist"
@@ -46,7 +44,13 @@
         "portable"
       ],
       "icon": "build/icon.ico",
-      "sign": "build/sign.js"
+      "sign": "build/sign.js",
+      "extraResources": [
+        {
+          "from": "bin/ponyatny.exe",
+          "to": "ponyatny/ponyatny.exe"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -61,6 +65,45 @@
     },
     "asarUnpack": [
       "app/decomp/ghidra/**"
-    ]
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icon.png",
+      "category": "Development",
+      "artifactName": "IvanCode-${version}-linux-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "bin/ponyatny-linux",
+          "to": "ponyatny/ponyatny-linux"
+        }
+      ]
+    },
+    "deb": {
+      "packageName": "ivancode"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.png",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "notarize": false,
+      "artifactName": "IvanCode-${version}-mac-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "bin/ponyatny-macos",
+          "to": "ponyatny/ponyatny-macos"
+        }
+      ]
+    },
+    "dmg": {
+      "artifactName": "IvanCode-${version}-mac-${arch}.${ext}"
+    }
   }
 }
